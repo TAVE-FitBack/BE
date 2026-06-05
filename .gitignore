@@ -1,0 +1,60 @@
+HELP.md
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+*.code-workspace
+.history/
+bin/
+/bin/
+
+### 로컬 환경 변수 및 보안 파일 ###
+.env
+.env.local
+
+### 운영체제(OS) 메타데이터 파일 ###
+.DS_Store
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+### 애플리케이션 빌드/실행 로그 ###
+*.log
+logs/
+
+### 인텔리제이 내부 데이터베이스/테스크 캐시 보호 ###
+.idea/dataSources/
+.idea/dataSources.local.xml
+.idea/tasks.xml
