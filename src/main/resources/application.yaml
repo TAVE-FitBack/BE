@@ -21,8 +21,31 @@ spring:
       hibernate:
         format_sql: true # 콘솔에 출력되는 SQL을 보기 좋게 정렬
         dialect: org.hibernate.dialect.PostgreSQLDialect # PostgreSQL 방언 설정
+        jdbc:
+          time_zone: Asia/Seoul # 시간 기준 설정
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 # JWT 커스텀 설정
 jwt:
   secret: ${JWT_SECRET}
   expiration: 86400000 # 토큰 유효 시간: 24시간 (밀리초 단위)
+  refresh-expiration: 604800000 # 7일
+
+app:
+  base-url: ${APP_BASE_URL:http://localhost:8080}

@@ -32,7 +32,7 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity
                 .badRequest()
-                .body(ApiResponse.onFailure("INVALID_INPUT_VALUE", "입력값 검증 실패"));
+                .body(ApiResponse.onFailure("INVALID_INPUT_VALUE", "입력값 검증 실패", errors));
     }
 
     @ExceptionHandler(Exception.class)
