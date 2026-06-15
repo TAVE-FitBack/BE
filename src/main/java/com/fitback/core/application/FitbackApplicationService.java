@@ -116,6 +116,7 @@ public class FitbackApplicationService {
     @Transactional
     public List<Map<String, Object>> replaceInterests(String customerId, Map<String, Object> body) {
         List<?> ids = body.get("serviceIds") instanceof List<?> values ? values : List.of();
+        store.removeMatching("interests", "customerId", customerId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (Object serviceId : ids) {
             result.add(store.create("interests", Map.of("customerId", customerId, "serviceId", String.valueOf(serviceId))));
@@ -129,6 +130,12 @@ public class FitbackApplicationService {
 
     public List<Map<String, Object>> replaceReasons(String consultationId, Map<String, Object> body) {
         List<?> reasons = body.get("reasons") instanceof List<?> values ? values : List.of(body);
+        long primaryCount = reasons.stream().filter(reason -> role(reason).equals("PRIMARY")).count();
+        long subCount = reasons.stream().filter(reason -> role(reason).equals("SUB")).count();
+        if (primaryCount != 1 || subCount > 2) {
+            throw new IllegalArgumentException("reasons require exactly one PRIMARY and at most two SUB entries");
+        }
+        store.removeMatching("reasons", "consultationId", consultationId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (Object reason : reasons) {
             Map<String, Object> value = reason instanceof Map<?, ?> map ? cast(map) : Map.of("reason", reason);
@@ -137,6 +144,17 @@ public class FitbackApplicationService {
             result.add(store.create("reasons", data));
         }
         return result;
+    }
+
+    public Map<String, Object> createContactResult(String customerId, Map<String, Object> body) {
+        Map<String, Object> data = new LinkedHashMap<>(body);
+        data.put("customerId", customerId);
+        boolean registered = "REGISTERED".equals(String.valueOf(body.get("status")));
+        data.put("customerStatusUpdated", registered);
+        if (registered) {
+            store.update("customers", customerId, Map.of("status", "REGISTERED"));
+        }
+        return store.create("contactResults", data);
     }
 
     public List<Map<String, Object>> generateMessages(String followUpId) {
@@ -207,6 +225,14 @@ public class FitbackApplicationService {
             throw new IllegalArgumentException(key + " is required");
         }
         return String.valueOf(value);
+    }
+
+    private String role(Object reason) {
+        if (reason instanceof Map<?, ?> map) {
+            Object role = map.containsKey("reasonRole") ? map.get("reasonRole") : map.get("role");
+            return String.valueOf(role);
+        }
+        return "";
     }
 
     @SuppressWarnings("unchecked")

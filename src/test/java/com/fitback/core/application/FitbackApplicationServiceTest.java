@@ -1,6 +1,7 @@
 package com.fitback.core.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Map;
@@ -53,5 +54,34 @@ class FitbackApplicationServiceTest {
         service.enroll(String.valueOf(customer.get("id")), Map.of("serviceId", "pt-10"));
 
         assertThat(service.get("customers", String.valueOf(customer.get("id")))).containsEntry("status", "REGISTERED");
+    }
+
+    @Test
+    void interestReplacementRemovesPreviousValues() {
+        Map<String, Object> customer = service.create("customers", Map.of("name", "Choi"));
+        String customerId = String.valueOf(customer.get("id"));
+        service.replaceInterests(customerId, Map.of("serviceIds", List.of("old")));
+
+        service.replaceInterests(customerId, Map.of("serviceIds", List.of("new")));
+
+        assertThat(service.interests(customerId)).extracting(item -> item.get("serviceId")).containsExactly("new");
+    }
+
+    @Test
+    void reasonsRequireOnePrimaryAndAtMostTwoSubEntries() {
+        assertThatThrownBy(() -> service.replaceReasons("consultation", Map.of("reasons",
+                List.of(Map.of("reasonRole", "SUB"), Map.of("reasonRole", "SUB"), Map.of("reasonRole", "SUB")))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void registeredContactResultUpdatesCustomerStatus() {
+        Map<String, Object> customer = service.create("customers", Map.of("name", "Jung"));
+        String customerId = String.valueOf(customer.get("id"));
+
+        Map<String, Object> result = service.createContactResult(customerId, Map.of("status", "REGISTERED"));
+
+        assertThat(result).containsEntry("customerStatusUpdated", true);
+        assertThat(service.get("customers", customerId)).containsEntry("status", "REGISTERED");
     }
 }

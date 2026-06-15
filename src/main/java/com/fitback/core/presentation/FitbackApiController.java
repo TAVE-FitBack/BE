@@ -52,7 +52,7 @@ public class FitbackApiController {
     @PatchMapping("/follow-ups/{id}/status") Map<String, Object> followUpStatus(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("followUps", id, b); }
     @PatchMapping("/follow-ups/{id}/snooze") Map<String, Object> snooze(@PathVariable String id, @RequestBody(required=false) Map<String, Object> b) { return app.update("followUps", id, b == null ? Map.of("status", "SNOOZED") : b); }
     @PutMapping("/follow-ups/{id}") Map<String, Object> updateFollowUp(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("followUps", id, b); }
-    @PostMapping("/customers/{id}/contact-results") ResponseEntity<Map<String, Object>> contactResult(@PathVariable String id, @RequestBody Map<String, Object> b) { b.put("customerId", id); return created(app.create("contactResults", b)); }
+    @PostMapping("/customers/{id}/contact-results") ResponseEntity<Map<String, Object>> contactResult(@PathVariable String id, @RequestBody Map<String, Object> b) { return created(app.createContactResult(id, b)); }
     @GetMapping("/customers/{id}/contact-results") List<Map<String, Object>> contactResults(@PathVariable String id) { return app.by("contactResults", "customerId", id); }
 
     @PostMapping("/follow-ups/{id}/messages/generate") List<Map<String, Object>> generateMessages(@PathVariable String id) { return app.generateMessages(id); }

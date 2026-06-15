@@ -72,6 +72,11 @@ public class FitbackStore {
         return result;
     }
 
+    public void removeMatching(String collection, String key, Object value) {
+        collections.getOrDefault(collection, Map.of()).entrySet().removeIf(entry ->
+                String.valueOf(entry.getValue().get(key)).equals(String.valueOf(value)));
+    }
+
     public long count(String collection) {
         return list(collection).stream().filter(entity -> !Boolean.TRUE.equals(entity.get("deleted"))).count();
     }
