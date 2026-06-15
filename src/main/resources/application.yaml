@@ -24,5 +24,5 @@ spring:
 
 # JWT 커스텀 설정
 jwt:
-  secret: ${JWT_SECRET:local-development-secret-key-change-me}
+  secret: ${JWT_SECRET}
   expiration: 86400000 # 토큰 유효 시간: 24시간 (밀리초 단위)

@@ -12,18 +12,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fitback.core.domain.FitbackStore;
-import com.fitback.core.infrastructure.AiTextAdapter;
+import com.fitback.core.application.port.AiAnalysisPort;
 import com.fitback.global.security.JwtTokenService;
+import com.fitback.global.security.InvalidRefreshTokenException;
 
 @Service
 public class FitbackApplicationService {
 
     private final FitbackStore store;
-    private final AiTextAdapter ai;
+    private final AiAnalysisPort ai;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService tokens;
 
-    public FitbackApplicationService(FitbackStore store, AiTextAdapter ai, PasswordEncoder passwordEncoder,
+    public FitbackApplicationService(FitbackStore store, AiAnalysisPort ai, PasswordEncoder passwordEncoder,
             JwtTokenService tokens) {
         this.store = store;
         this.ai = ai;
@@ -39,6 +40,7 @@ public class FitbackApplicationService {
         Map<String, Object> user = new LinkedHashMap<>(body);
         user.put("password", passwordEncoder.encode(required(body, "password")));
         user.putIfAbsent("role", "OWNER");
+        user.put("storeId", UUID.randomUUID().toString());
         Map<String, Object> created = store.create("users", user);
         return Map.of("userId", created.get("id"), "message", "registration completed");
     }
@@ -50,12 +52,26 @@ public class FitbackApplicationService {
         if (!passwordEncoder.matches(required(body, "password"), String.valueOf(user.get("password")))) {
             throw new IllegalArgumentException("invalid credentials");
         }
-        return tokens(email);
+        return tokens(email, String.valueOf(user.get("storeId")));
     }
 
-    public Map<String, Object> tokens(String subject) {
-        return Map.of("accessToken", tokens.issue(subject), "refreshToken", "refresh-" + UUID.randomUUID(),
-                "user", Map.of("email", subject));
+    public Map<String, Object> refresh(String refreshToken) {
+        Map<String, Object> session = store.matching("refreshTokens", "token", refreshToken).stream().findFirst()
+                .orElseThrow(InvalidRefreshTokenException::new);
+        if (Instant.parse(String.valueOf(session.get("expiredAt"))).isBefore(Instant.now())) {
+            store.removeMatching("refreshTokens", "token", refreshToken);
+            throw new InvalidRefreshTokenException();
+        }
+        store.removeMatching("refreshTokens", "token", refreshToken);
+        return tokens(String.valueOf(session.get("subject")), String.valueOf(session.get("storeId")));
+    }
+
+    private Map<String, Object> tokens(String subject, String storeId) {
+        String refreshToken = "refresh-" + UUID.randomUUID();
+        store.create("refreshTokens", Map.of("token", refreshToken, "subject", subject, "storeId", storeId,
+                "expiredAt", Instant.now().plusSeconds(2_592_000).toString()));
+        return Map.of("accessToken", tokens.issue(subject, storeId), "refreshToken", refreshToken,
+                "user", Map.of("email", subject, "storeId", storeId));
     }
 
     public Map<String, Object> singleton(String name) {
@@ -108,9 +124,27 @@ public class FitbackApplicationService {
         Map<String, Object> consultation = store.get("consultations", consultationId);
         Map<String, Object> analysis = ai.analyze(String.valueOf(consultation.getOrDefault("rawText", "")));
         Map<String, Object> changes = new LinkedHashMap<>(analysis);
+        changes.remove("reasons");
         changes.put("aiParsedAt", Instant.now().toString());
         changes.put("status", "ANALYZED");
-        return store.update("consultations", consultationId, changes);
+        Map<String, Object> analyzed = store.update("consultations", consultationId, changes);
+        String customerId = String.valueOf(consultation.get("customerId"));
+        if (analysis.containsKey("temperature")) {
+            store.update("customers", customerId, Map.of("leadTemperature", analysis.get("temperature")));
+        }
+        if (analysis.get("reasons") instanceof List<?> reasons && !reasons.isEmpty()) {
+            replaceReasons(consultationId, Map.of("reasons", reasons));
+        }
+        store.matching("followUps", "consultationId", consultationId).stream().findFirst().ifPresent(followUp -> {
+            Map<String, Object> followUpChanges = new LinkedHashMap<>();
+            copyIfPresent(analysis, followUpChanges, "recommendContactDate");
+            copyIfPresent(analysis, followUpChanges, "persuasionPoints");
+            copyIfPresent(analysis, followUpChanges, "temperatureBasis");
+            if (!followUpChanges.isEmpty()) {
+                store.update("followUps", String.valueOf(followUp.get("id")), followUpChanges);
+            }
+        });
+        return analyzed;
     }
 
     @Transactional
@@ -131,9 +165,11 @@ public class FitbackApplicationService {
     public List<Map<String, Object>> replaceReasons(String consultationId, Map<String, Object> body) {
         List<?> reasons = body.get("reasons") instanceof List<?> values ? values : List.of(body);
         long primaryCount = reasons.stream().filter(reason -> role(reason).equals("PRIMARY")).count();
-        long subCount = reasons.stream().filter(reason -> role(reason).equals("SUB")).count();
-        if (primaryCount != 1 || subCount > 2) {
-            throw new IllegalArgumentException("reasons require exactly one PRIMARY and at most two SUB entries");
+        long subCount = reasons.stream().filter(reason -> role(reason).equals("SUB1") || role(reason).equals("SUB2")).count();
+        long invalidCount = reasons.stream().filter(reason -> !List.of("PRIMARY", "SUB1", "SUB2").contains(role(reason))).count();
+        long distinctRoleCount = reasons.stream().map(this::role).distinct().count();
+        if (primaryCount != 1 || subCount > 2 || invalidCount > 0 || distinctRoleCount != reasons.size()) {
+            throw new IllegalArgumentException("reasons require PRIMARY and optional unique SUB1/SUB2 entries");
         }
         store.removeMatching("reasons", "consultationId", consultationId);
         List<Map<String, Object>> result = new ArrayList<>();
@@ -153,8 +189,27 @@ public class FitbackApplicationService {
         data.put("customerStatusUpdated", registered);
         if (registered) {
             store.update("customers", customerId, Map.of("status", "REGISTERED"));
+            Map<String, Object> enrollment = new LinkedHashMap<>();
+            enrollment.put("customerId", customerId);
+            enrollment.put("serviceId", body.getOrDefault("serviceId", "UNSPECIFIED"));
+            enrollment.put("status", "ACTIVE");
+            store.create("enrollments", enrollment);
         }
         return store.create("contactResults", data);
+    }
+
+    public Map<String, Object> searchCustomers(String status, String temperature, String search, int page, int size) {
+        List<Map<String, Object>> filtered = store.list("customers").stream()
+                .filter(customer -> status == null || status.equals(String.valueOf(customer.get("status"))))
+                .filter(customer -> temperature == null || temperature.equals(String.valueOf(customer.get("leadTemperature"))))
+                .filter(customer -> search == null || String.valueOf(customer.getOrDefault("name", "")).contains(search)
+                        || String.valueOf(customer.getOrDefault("phoneNum", "")).contains(search))
+                .map(this::maskCustomerListItem)
+                .toList();
+        int from = Math.min(page * size, filtered.size());
+        int to = Math.min(from + size, filtered.size());
+        return Map.of("content", filtered.subList(from, to), "totalElements", filtered.size(),
+                "totalPages", filtered.isEmpty() ? 0 : (filtered.size() + size - 1) / size);
     }
 
     public List<Map<String, Object>> generateMessages(String followUpId) {
@@ -191,7 +246,8 @@ public class FitbackApplicationService {
     }
 
     public Map<String, Object> summary() {
-        return Map.of("todayConsultCount", store.count("consultations"), "registeredCount", store.count("enrollments"),
+        return Map.of("todayConsultCount", store.count("consultations"),
+                "monthlyRegistrationRate", rate(store.count("enrollments"), store.count("consultations")),
                 "pendingFollowUpCount", store.matching("followUps", "status", "PENDING").size(),
                 "overdueFollowUpCount", 0);
     }
@@ -204,11 +260,14 @@ public class FitbackApplicationService {
         }).toList();
     }
 
-    public Map<String, Object> report(String type) {
+    public Object report(String type) {
         return switch (type) {
-            case "conversion" -> Map.of("registeredCount", store.count("enrollments"), "consultCount",
-                    store.count("consultations"), "registrationRate", rate(store.count("enrollments"), store.count("consultations")));
-            case "non-conversion-reasons" -> Map.of("reasons", store.list("reasons"));
+            case "conversion" -> Map.of(
+                    "monthly", List.of(Map.of("month", "current", "registeredCount", store.count("enrollments"),
+                            "consultCount", store.count("consultations"),
+                            "registrationRate", rate(store.count("enrollments"), store.count("consultations")))),
+                    "prevPeriodRate", 0, "change", 0);
+            case "non-conversion-reasons" -> store.list("reasons");
             case "follow-up-funnel" -> Map.of("stages", List.of(Map.of("stage", "PENDING", "count",
                     store.matching("followUps", "status", "PENDING").size())));
             default -> Map.of("inflowPaths", List.of(), "interestServices", store.list("interests"));
@@ -233,6 +292,21 @@ public class FitbackApplicationService {
             return String.valueOf(role);
         }
         return "";
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source.containsKey(key)) {
+            target.put(key, source.get(key));
+        }
+    }
+
+    private Map<String, Object> maskCustomerListItem(Map<String, Object> customer) {
+        Map<String, Object> masked = new LinkedHashMap<>(customer);
+        String phone = String.valueOf(masked.getOrDefault("phoneNum", ""));
+        if (phone.length() >= 4) {
+            masked.put("phoneNum", "***-****-" + phone.substring(phone.length() - 4));
+        }
+        return masked;
     }
 
     @SuppressWarnings("unchecked")

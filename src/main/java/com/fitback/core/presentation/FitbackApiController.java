@@ -8,17 +8,22 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import com.fitback.core.application.FitbackApplicationService;
+import com.fitback.core.application.DeliveryCallbackService;
 
 @RestController
 @RequestMapping("/api/v1")
 public class FitbackApiController {
     private final FitbackApplicationService app;
+    private final DeliveryCallbackService callbacks;
 
-    public FitbackApiController(FitbackApplicationService app) { this.app = app; }
+    public FitbackApiController(FitbackApplicationService app, DeliveryCallbackService callbacks) {
+        this.app = app;
+        this.callbacks = callbacks;
+    }
 
     @PostMapping("/auth/register") ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, Object> b) { return created(app.register(b)); }
     @PostMapping("/auth/login") Map<String, Object> login(@RequestBody Map<String, Object> b) { return app.login(b); }
-    @PostMapping("/auth/refresh") Map<String, Object> refresh(@RequestBody Map<String, Object> b) { return app.tokens(String.valueOf(b.get("refreshToken"))); }
+    @PostMapping("/auth/refresh") Map<String, Object> refresh(@RequestBody Map<String, Object> b) { return app.refresh(String.valueOf(b.get("refreshToken"))); }
     @PostMapping("/auth/logout") ResponseEntity<Void> logout() { return ResponseEntity.noContent().build(); }
     @PostMapping("/auth/password-reset/request") Map<String, Object> resetRequest(@RequestBody Map<String, Object> b) { return Map.of("message", "password reset requested"); }
     @PostMapping("/auth/password-reset/confirm") Map<String, Object> resetConfirm(@RequestBody Map<String, Object> b) { return Map.of("message", "password reset completed"); }
@@ -32,7 +37,14 @@ public class FitbackApiController {
     @GetMapping("/store/settings") Map<String, Object> settings() { return app.singleton("settings"); }
     @PutMapping("/store/settings") Map<String, Object> updateSettings(@RequestBody Map<String, Object> b) { return app.saveSingleton("settings", b); }
 
-    @GetMapping("/customers") Map<String, Object> customers() { List<Map<String, Object>> c = app.list("customers"); return Map.of("content", c, "totalElements", c.size(), "totalPages", c.isEmpty() ? 0 : 1); }
+    @GetMapping("/customers") Map<String, Object> customers(
+            @RequestParam(required=false) String status,
+            @RequestParam(required=false) String temperature,
+            @RequestParam(required=false) String search,
+            @RequestParam(defaultValue="0") int page,
+            @RequestParam(defaultValue="20") int size) {
+        return app.searchCustomers(status, temperature, search, page, Math.max(1, Math.min(size, 100)));
+    }
     @PostMapping("/customers") ResponseEntity<Map<String, Object>> createCustomer(@RequestBody Map<String, Object> b) { Map<String, Object> c = app.create("customers", b); c.put("isDuplicate", false); return created(c); }
     @GetMapping("/customers/{id}") Map<String, Object> customer(@PathVariable String id) { return app.get("customers", id); }
     @PutMapping("/customers/{id}") Map<String, Object> updateCustomer(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("customers", id, b); }
@@ -55,12 +67,14 @@ public class FitbackApiController {
     @PostMapping("/customers/{id}/contact-results") ResponseEntity<Map<String, Object>> contactResult(@PathVariable String id, @RequestBody Map<String, Object> b) { return created(app.createContactResult(id, b)); }
     @GetMapping("/customers/{id}/contact-results") List<Map<String, Object>> contactResults(@PathVariable String id) { return app.by("contactResults", "customerId", id); }
 
-    @PostMapping("/follow-ups/{id}/messages/generate") List<Map<String, Object>> generateMessages(@PathVariable String id) { return app.generateMessages(id); }
+    @PostMapping("/follow-ups/{id}/messages/generate") ResponseEntity<List<Map<String, Object>>> generateMessages(@PathVariable String id) { return ResponseEntity.status(HttpStatus.CREATED).body(app.generateMessages(id)); }
     @GetMapping("/follow-ups/{id}/messages") List<Map<String, Object>> messages(@PathVariable String id) { return app.by("messages", "followUpId", id); }
     @PutMapping("/messages/{id}") Map<String, Object> updateMessage(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("messages", id, b); }
     @PatchMapping("/messages/{id}/copy") Map<String, Object> copyMessage(@PathVariable String id) { return app.update("messages", id, Map.of("deliveryStatus", "COPIED")); }
     @PostMapping("/messages/{id}/send") ResponseEntity<Map<String, Object>> sendMessage(@PathVariable String id, @RequestBody(required=false) Map<String, Object> b) { return ResponseEntity.accepted().body(app.update("messages", id, Map.of("deliveryStatus", "SENT"))); }
-    @PostMapping("/messages/delivery-callback") Map<String, Object> callback(@RequestBody Map<String, Object> b) { return app.update("messages", String.valueOf(b.get("messageId")), b); }
+    @PostMapping("/messages/delivery-callback") Map<String, Object> callback(
+            @RequestHeader(value="X-Webhook-Signature", required=false) String signature,
+            @RequestBody Map<String, Object> b) { return callbacks.apply(signature, b); }
 
     @GetMapping("/store/events") List<Map<String, Object>> events() { return app.list("events"); }
     @PostMapping("/store/events") ResponseEntity<Map<String, Object>> createEvent(@RequestBody Map<String, Object> b) { return created(app.createEvent(b)); }
@@ -73,10 +87,10 @@ public class FitbackApiController {
 
     @GetMapping("/dashboard/summary") Map<String, Object> summary() { return app.summary(); }
     @GetMapping("/dashboard/priority-customers") List<Map<String, Object>> priorityCustomers() { return app.priorityCustomers(); }
-    @GetMapping("/reports/conversion") Map<String, Object> conversion() { return app.report("conversion"); }
-    @GetMapping("/reports/non-conversion-reasons") Map<String, Object> nonConversionReasons() { return app.report("non-conversion-reasons"); }
-    @GetMapping("/reports/follow-up-funnel") Map<String, Object> followUpFunnel() { return app.report("follow-up-funnel"); }
-    @GetMapping("/reports/consultation") Map<String, Object> consultationReport() { return app.report("consultation"); }
+    @GetMapping("/reports/conversion") Object conversion() { return app.report("conversion"); }
+    @GetMapping("/reports/non-conversion-reasons") Object nonConversionReasons() { return app.report("non-conversion-reasons"); }
+    @GetMapping("/reports/follow-up-funnel") Object followUpFunnel() { return app.report("follow-up-funnel"); }
+    @GetMapping("/reports/consultation") Object consultationReport() { return app.report("consultation"); }
 
     private ResponseEntity<Map<String, Object>> created(Map<String, Object> body) { return ResponseEntity.status(HttpStatus.CREATED).body(body); }
 }

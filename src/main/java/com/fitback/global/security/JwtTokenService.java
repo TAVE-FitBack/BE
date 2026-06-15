@@ -22,13 +22,17 @@ public class JwtTokenService {
         this.expirationMillis = expirationMillis;
     }
 
-    public String issue(String subject) {
+    public String issue(String subject, String storeId) {
         Instant now = Instant.now();
-        return Jwts.builder().subject(subject).issuedAt(Date.from(now))
+        return Jwts.builder().subject(subject).claim("storeId", storeId).issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(expirationMillis))).signWith(key).compact();
     }
 
     public String subject(String token) {
         return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload().getSubject();
+    }
+
+    public String storeId(String token) {
+        return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload().get("storeId", String.class);
     }
 }

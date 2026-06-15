@@ -22,7 +22,9 @@ import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration"
+                + "org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration",
+        "jwt.secret=local-development-secret-key-change-me",
+        "ai.fallback-enabled=true"
 })
 @AutoConfigureMockMvc
 class ApiContractTest {
@@ -114,5 +116,58 @@ class ApiContractTest {
     @Test
     void rejectsProtectedRouteWithoutBearerToken() throws Exception {
         mockMvc.perform(get("/api/v1/customers")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void rejectsUnknownRefreshToken() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"forged\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void rotatesRefreshTokenAndRejectsReuse() throws Exception {
+        String email = "rotate@fitback.test";
+        mockMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\",\"password\":\"secret12\",\"name\":\"Owner\"}"));
+        MvcResult login = mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"secret12\"}"))
+                .andReturn();
+        String refresh = objectMapper.readTree(login.getResponse().getContentAsString()).get("refreshToken").asText();
+        String body = "{\"refreshToken\":\"" + refresh + "\"}";
+
+        mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void rejectsUnsignedDeliveryCallback() throws Exception {
+        mockMvc.perform(post("/api/v1/messages/delivery-callback").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"messageId\":\"00000000-0000-0000-0000-000000000000\",\"status\":\"DELIVERED\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void isolatesCustomerDataByJwtStoreId() throws Exception {
+        String first = registerAndLogin("first@fitback.test");
+        String second = registerAndLogin("second@fitback.test");
+        mockMvc.perform(post("/api/v1/customers").header("Authorization", "Bearer " + first)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Tenant One Customer\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/customers").header("Authorization", "Bearer " + second))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+    }
+
+    private String registerAndLogin(String email) throws Exception {
+        mockMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\",\"password\":\"secret12\",\"name\":\"Owner\"}"));
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"secret12\"}"))
+                .andExpect(status().isOk()).andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString()).get("accessToken").asText();
     }
 }

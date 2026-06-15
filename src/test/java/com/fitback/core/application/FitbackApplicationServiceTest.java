@@ -20,7 +20,7 @@ class FitbackApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FitbackApplicationService(new FitbackStore(), new AiTextAdapter(""), new BCryptPasswordEncoder(),
+        service = new FitbackApplicationService(new FitbackStore(), new AiTextAdapter("", "", true), new BCryptPasswordEncoder(),
                 new JwtTokenService("local-development-secret-key-change-me", 86_400_000));
     }
 
@@ -33,6 +33,7 @@ class FitbackApplicationServiceTest {
         Map<String, Object> analyzed = service.analyzeConsultation(String.valueOf(consultation.get("id")));
 
         assertThat(analyzed).containsEntry("temperature", "HOT").containsEntry("provider", "LOCAL_FALLBACK");
+        assertThat(service.get("customers", String.valueOf(customer.get("id")))).containsEntry("leadTemperature", "HOT");
         assertThat(service.by("followUps", "customerId", String.valueOf(customer.get("id")))).hasSize(1);
     }
 
@@ -70,7 +71,7 @@ class FitbackApplicationServiceTest {
     @Test
     void reasonsRequireOnePrimaryAndAtMostTwoSubEntries() {
         assertThatThrownBy(() -> service.replaceReasons("consultation", Map.of("reasons",
-                List.of(Map.of("reasonRole", "SUB"), Map.of("reasonRole", "SUB"), Map.of("reasonRole", "SUB")))))
+                List.of(Map.of("reasonRole", "SUB1"), Map.of("reasonRole", "SUB1"), Map.of("reasonRole", "SUB2")))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -83,5 +84,14 @@ class FitbackApplicationServiceTest {
 
         assertThat(result).containsEntry("customerStatusUpdated", true);
         assertThat(service.get("customers", customerId)).containsEntry("status", "REGISTERED");
+        assertThat(service.by("enrollments", "customerId", customerId)).hasSize(1);
+    }
+
+    @Test
+    void configuredAiFailureIsExplicit() {
+        AiTextAdapter failing = new AiTextAdapter("key", "http://127.0.0.1:1", false);
+
+        assertThatThrownBy(() -> failing.analyze("text"))
+                .isInstanceOf(AiTextAdapter.AiProviderException.class);
     }
 }
