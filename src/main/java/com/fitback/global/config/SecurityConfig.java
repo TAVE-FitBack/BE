@@ -1,6 +1,7 @@
 package com.fitback.global.config;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -12,6 +13,7 @@ import org.springframework.security.web.SecurityFilterChain;
 - 초기 세팅 시 무조건 로그인창이 뜨거나 모든 API 호출이 401 Unauthorized로 막힘
 - 초기 단계에는 기본 API 테스트를 하기 위해 전면 허용(permitAll)
  */
+@Configuration
 public class SecurityConfig {
 
     @Bean
