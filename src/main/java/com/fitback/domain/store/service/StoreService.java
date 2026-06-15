@@ -3,6 +3,7 @@ package com.fitback.domain.store.service;
 import com.fitback.domain.store.dto.request.StoreSetupRequest;
 import com.fitback.domain.store.dto.response.StoreSetupResponse;
 import com.fitback.domain.store.entity.Store;
+import com.fitback.domain.store.exception.StoreErrorCode;
 import com.fitback.domain.store.repository.StoreRepository;
 import com.fitback.domain.user.entity.User;
 import com.fitback.domain.user.exception.UserErrorCode;
@@ -28,6 +29,11 @@ public class StoreService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+        if (user.getStore() != null) {
+            throw new BusinessException(StoreErrorCode
+                    .STORE_ALREADY_EXISTS);
+        }
 
         Store store = Store.builder()
                 .name(request.getName())
