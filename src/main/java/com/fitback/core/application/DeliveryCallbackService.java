@@ -25,6 +25,6 @@ public class DeliveryCallbackService {
                 secret.getBytes(StandardCharsets.UTF_8), signature.getBytes(StandardCharsets.UTF_8))) {
             throw new WebhookSignatureException();
         }
-        return store.updateAcrossTenants("messages", String.valueOf(body.get("messageId")), body);
+        return store.updateAcrossTenantsMatching("messages", "providerMessageId", body.get("messageId"), body);
     }
 }

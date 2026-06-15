@@ -17,10 +17,12 @@ import com.fitback.global.security.JwtTokenService;
 class FitbackApplicationServiceTest {
 
     private FitbackApplicationService service;
+    private InMemoryTenantDataRepository repository;
 
     @BeforeEach
     void setUp() {
-        service = new FitbackApplicationService(new InMemoryTenantDataRepository(), new AiTextAdapter("", "", true), new BCryptPasswordEncoder(),
+        repository = new InMemoryTenantDataRepository();
+        service = new FitbackApplicationService(repository, new AiTextAdapter("", "", true), new BCryptPasswordEncoder(),
                 new JwtTokenService("local-development-secret-key-change-me", 86_400_000));
     }
 
@@ -93,5 +95,32 @@ class FitbackApplicationServiceTest {
 
         assertThatThrownBy(() -> failing.analyze("text"))
                 .isInstanceOf(AiTextAdapter.AiProviderException.class);
+    }
+
+    @Test
+    void customerSearchMasksPhoneAndSoftDeleteRemovesCustomer() {
+        Map<String, Object> customer = service.create("customers",
+                Map.of("name", "Search Kim", "phoneNum", "010-1234-5678", "status", "LEAD"));
+
+        Map<String, Object> result = service.searchCustomers("LEAD", null, null, "Search", "name", "asc", 0, 20);
+        assertThat((List<?>) result.get("content")).hasSize(1);
+        assertThat(result.toString()).contains("***-****-5678");
+
+        service.deleteCustomer(String.valueOf(customer.get("id")));
+        assertThat(service.searchCustomers(null, null, null, null, null, "desc", 0, 20).get("content").toString())
+                .doesNotContain("Search Kim");
+    }
+
+    @Test
+    void messageSendAndSignedCallbackUseProviderMessageId() {
+        Map<String, Object> message = service.create("messages", Map.of("content", "hello"));
+        Map<String, Object> sending = service.sendMessage(String.valueOf(message.get("id")), Map.of("provider", "NAVER"));
+        String providerMessageId = String.valueOf(sending.get("providerMessageId"));
+
+        DeliveryCallbackService callbacks = new DeliveryCallbackService(repository, "secret");
+        Map<String, Object> delivered = callbacks.apply("secret",
+                Map.of("messageId", providerMessageId, "deliveryStatus", "DELIVERED"));
+
+        assertThat(delivered).containsEntry("deliveryStatus", "DELIVERED");
     }
 }

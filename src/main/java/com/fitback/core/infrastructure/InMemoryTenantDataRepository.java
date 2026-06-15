@@ -30,7 +30,10 @@ public class InMemoryTenantDataRepository implements TenantDataRepository {
     }
 
     public List<Map<String, Object>> list(String collection) {
-        return collections.getOrDefault(collectionKey(collection), Map.of()).values().stream().map(this::copy).toList();
+        return collections.getOrDefault(collectionKey(collection), Map.of()).values().stream()
+                .filter(entity -> !Boolean.TRUE.equals(entity.get("deleted")))
+                .map(this::copy)
+                .toList();
     }
 
     public Map<String, Object> get(String collection, String id) {
@@ -90,6 +93,21 @@ public class InMemoryTenantDataRepository implements TenantDataRepository {
             }
         }
         throw new EntityNotFoundException(collection + " not found: " + id);
+    }
+
+    public Map<String, Object> updateAcrossTenantsMatching(String collection, String key, Object value,
+            Map<String, Object> changes) {
+        for (Map.Entry<String, Map<UUID, Map<String, Object>>> entry : collections.entrySet()) {
+            if (entry.getKey().endsWith(":" + collection)) {
+                for (Map<String, Object> entity : entry.getValue().values()) {
+                    if (String.valueOf(entity.get(key)).equals(String.valueOf(value))) {
+                        entity.putAll(changes);
+                        return copy(entity);
+                    }
+                }
+            }
+        }
+        throw new EntityNotFoundException(collection + " not found by " + key);
     }
 
     public long count(String collection) {

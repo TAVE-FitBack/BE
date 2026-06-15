@@ -259,6 +259,13 @@ public class FitbackApplicationService {
         }).toList();
     }
 
+    public Map<String, Object> sendMessage(String messageId, Map<String, Object> body) {
+        String provider = String.valueOf(body == null ? "LOCAL" : body.getOrDefault("provider", "LOCAL"));
+        String providerMessageId = provider.toLowerCase() + "-" + UUID.randomUUID();
+        return store.update("messages", messageId, Map.of("provider", provider, "providerMessageId", providerMessageId,
+                "deliveryStatus", "SENDING", "sentAt", Instant.now().toString()));
+    }
+
     public Map<String, Object> createEvent(Map<String, Object> body) {
         Map<String, Object> event = store.create("events", body);
         String serviceId = String.valueOf(body.get("serviceId"));

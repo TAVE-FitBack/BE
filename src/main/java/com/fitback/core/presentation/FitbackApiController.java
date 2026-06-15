@@ -74,7 +74,7 @@ public class FitbackApiController {
     @GetMapping("/follow-ups/{id}/messages") List<Map<String, Object>> messages(@PathVariable String id) { return app.by("messages", "followUpId", id); }
     @PutMapping("/messages/{id}") Map<String, Object> updateMessage(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("messages", id, b); }
     @PatchMapping("/messages/{id}/copy") Map<String, Object> copyMessage(@PathVariable String id) { return app.update("messages", id, Map.of("deliveryStatus", "COPIED", "sentAt", java.time.Instant.now().toString())); }
-    @PostMapping("/messages/{id}/send") ResponseEntity<Map<String, Object>> sendMessage(@PathVariable String id, @RequestBody(required=false) Map<String, Object> b) { return ResponseEntity.accepted().body(app.update("messages", id, Map.of("deliveryStatus", "SENDING", "sentAt", java.time.Instant.now().toString()))); }
+    @PostMapping("/messages/{id}/send") ResponseEntity<Map<String, Object>> sendMessage(@PathVariable String id, @RequestBody(required=false) Map<String, Object> b) { return ResponseEntity.accepted().body(app.sendMessage(id, b)); }
     @PostMapping("/messages/delivery-callback") Map<String, Object> callback(
             @RequestHeader(value="X-Webhook-Signature", required=false) String signature,
             @RequestBody Map<String, Object> b) { return callbacks.apply(signature, b); }
