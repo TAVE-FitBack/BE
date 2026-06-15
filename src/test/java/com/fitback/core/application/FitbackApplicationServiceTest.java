@@ -10,8 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
-import com.fitback.core.domain.FitbackStore;
 import com.fitback.core.infrastructure.AiTextAdapter;
+import com.fitback.core.infrastructure.InMemoryTenantDataRepository;
 import com.fitback.global.security.JwtTokenService;
 
 class FitbackApplicationServiceTest {
@@ -20,7 +20,7 @@ class FitbackApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FitbackApplicationService(new FitbackStore(), new AiTextAdapter("", "", true), new BCryptPasswordEncoder(),
+        service = new FitbackApplicationService(new InMemoryTenantDataRepository(), new AiTextAdapter("", "", true), new BCryptPasswordEncoder(),
                 new JwtTokenService("local-development-secret-key-change-me", 86_400_000));
     }
 

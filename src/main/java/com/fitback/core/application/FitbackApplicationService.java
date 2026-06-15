@@ -11,7 +11,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.fitback.core.domain.FitbackStore;
+import com.fitback.core.application.port.TenantDataRepository;
 import com.fitback.core.application.port.AiAnalysisPort;
 import com.fitback.global.security.JwtTokenService;
 import com.fitback.global.security.InvalidRefreshTokenException;
@@ -19,12 +19,12 @@ import com.fitback.global.security.InvalidRefreshTokenException;
 @Service
 public class FitbackApplicationService {
 
-    private final FitbackStore store;
+    private final TenantDataRepository store;
     private final AiAnalysisPort ai;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService tokens;
 
-    public FitbackApplicationService(FitbackStore store, AiAnalysisPort ai, PasswordEncoder passwordEncoder,
+    public FitbackApplicationService(TenantDataRepository store, AiAnalysisPort ai, PasswordEncoder passwordEncoder,
             JwtTokenService tokens) {
         this.store = store;
         this.ai = ai;
@@ -64,6 +64,34 @@ public class FitbackApplicationService {
         }
         store.removeMatching("refreshTokens", "token", refreshToken);
         return tokens(String.valueOf(session.get("subject")), String.valueOf(session.get("storeId")));
+    }
+
+    public void logout(String refreshToken) {
+        if (refreshToken != null) {
+            store.removeMatching("refreshTokens", "token", refreshToken);
+        }
+    }
+
+    public Map<String, Object> requestPasswordReset(String email) {
+        store.matching("users", "email", email).stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown email"));
+        String token = "reset-" + UUID.randomUUID();
+        store.create("passwordResetTokens", Map.of("token", token, "email", email,
+                "expiredAt", Instant.now().plusSeconds(900).toString()));
+        return Map.of("message", "password reset requested", "token", token);
+    }
+
+    public Map<String, Object> confirmPasswordReset(String token, String newPassword) {
+        Map<String, Object> reset = store.matching("passwordResetTokens", "token", token).stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("invalid reset token"));
+        if (Instant.parse(String.valueOf(reset.get("expiredAt"))).isBefore(Instant.now())) {
+            throw new IllegalArgumentException("expired reset token");
+        }
+        Map<String, Object> user = store.matching("users", "email", reset.get("email")).stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown email"));
+        store.update("users", String.valueOf(user.get("id")), Map.of("password", passwordEncoder.encode(newPassword)));
+        store.removeMatching("passwordResetTokens", "token", token);
+        return Map.of("message", "password reset completed");
     }
 
     private Map<String, Object> tokens(String subject, String storeId) {
@@ -198,12 +226,19 @@ public class FitbackApplicationService {
         return store.create("contactResults", data);
     }
 
-    public Map<String, Object> searchCustomers(String status, String temperature, String search, int page, int size) {
+    public Map<String, Object> searchCustomers(String status, String temperature, String reasonType, String search,
+            String sortBy, String order, int page, int size) {
         List<Map<String, Object>> filtered = store.list("customers").stream()
                 .filter(customer -> status == null || status.equals(String.valueOf(customer.get("status"))))
                 .filter(customer -> temperature == null || temperature.equals(String.valueOf(customer.get("leadTemperature"))))
                 .filter(customer -> search == null || String.valueOf(customer.getOrDefault("name", "")).contains(search)
                         || String.valueOf(customer.getOrDefault("phoneNum", "")).contains(search))
+                .filter(customer -> reasonType == null || reasonType.equals(String.valueOf(customer.get("primaryReason"))))
+                .sorted((left, right) -> {
+                    String key = sortBy == null ? "createdAt" : sortBy;
+                    int compared = String.valueOf(left.getOrDefault(key, "")).compareTo(String.valueOf(right.getOrDefault(key, "")));
+                    return "asc".equalsIgnoreCase(order) ? compared : -compared;
+                })
                 .map(this::maskCustomerListItem)
                 .toList();
         int from = Math.min(page * size, filtered.size());

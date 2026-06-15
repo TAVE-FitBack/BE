@@ -7,15 +7,15 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import com.fitback.core.domain.FitbackStore;
+import com.fitback.core.application.port.TenantDataRepository;
 import com.fitback.global.security.WebhookSignatureException;
 
 @Service
 public class DeliveryCallbackService {
-    private final FitbackStore store;
+    private final TenantDataRepository store;
     private final String secret;
 
-    public DeliveryCallbackService(FitbackStore store, @Value("${webhook.secret:${WEBHOOK_SECRET:}}") String secret) {
+    public DeliveryCallbackService(TenantDataRepository store, @Value("${webhook.secret:${WEBHOOK_SECRET:}}") String secret) {
         this.store = store;
         this.secret = secret;
     }

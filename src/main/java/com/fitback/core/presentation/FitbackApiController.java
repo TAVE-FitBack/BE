@@ -24,9 +24,9 @@ public class FitbackApiController {
     @PostMapping("/auth/register") ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, Object> b) { return created(app.register(b)); }
     @PostMapping("/auth/login") Map<String, Object> login(@RequestBody Map<String, Object> b) { return app.login(b); }
     @PostMapping("/auth/refresh") Map<String, Object> refresh(@RequestBody Map<String, Object> b) { return app.refresh(String.valueOf(b.get("refreshToken"))); }
-    @PostMapping("/auth/logout") ResponseEntity<Void> logout() { return ResponseEntity.noContent().build(); }
-    @PostMapping("/auth/password-reset/request") Map<String, Object> resetRequest(@RequestBody Map<String, Object> b) { return Map.of("message", "password reset requested"); }
-    @PostMapping("/auth/password-reset/confirm") Map<String, Object> resetConfirm(@RequestBody Map<String, Object> b) { return Map.of("message", "password reset completed"); }
+    @PostMapping("/auth/logout") ResponseEntity<Void> logout(@RequestBody(required=false) Map<String, Object> b) { app.logout(b == null ? null : String.valueOf(b.get("refreshToken"))); return ResponseEntity.noContent().build(); }
+    @PostMapping("/auth/password-reset/request") Map<String, Object> resetRequest(@RequestBody Map<String, Object> b) { return app.requestPasswordReset(String.valueOf(b.get("email"))); }
+    @PostMapping("/auth/password-reset/confirm") Map<String, Object> resetConfirm(@RequestBody Map<String, Object> b) { return app.confirmPasswordReset(String.valueOf(b.get("token")), String.valueOf(b.get("newPassword"))); }
 
     @GetMapping("/store") Map<String, Object> store() { return app.singleton("store"); }
     @PostMapping("/store") ResponseEntity<Map<String, Object>> createStore(@RequestBody Map<String, Object> b) { return created(app.saveSingleton("store", b)); }
@@ -40,10 +40,13 @@ public class FitbackApiController {
     @GetMapping("/customers") Map<String, Object> customers(
             @RequestParam(required=false) String status,
             @RequestParam(required=false) String temperature,
+            @RequestParam(required=false) String reasonType,
             @RequestParam(required=false) String search,
+            @RequestParam(required=false) String sortBy,
+            @RequestParam(defaultValue="desc") String order,
             @RequestParam(defaultValue="0") int page,
             @RequestParam(defaultValue="20") int size) {
-        return app.searchCustomers(status, temperature, search, page, Math.max(1, Math.min(size, 100)));
+        return app.searchCustomers(status, temperature, reasonType, search, sortBy, order, page, Math.max(1, Math.min(size, 100)));
     }
     @PostMapping("/customers") ResponseEntity<Map<String, Object>> createCustomer(@RequestBody Map<String, Object> b) { Map<String, Object> c = app.create("customers", b); c.put("isDuplicate", false); return created(c); }
     @GetMapping("/customers/{id}") Map<String, Object> customer(@PathVariable String id) { return app.get("customers", id); }
@@ -70,8 +73,8 @@ public class FitbackApiController {
     @PostMapping("/follow-ups/{id}/messages/generate") ResponseEntity<List<Map<String, Object>>> generateMessages(@PathVariable String id) { return ResponseEntity.status(HttpStatus.CREATED).body(app.generateMessages(id)); }
     @GetMapping("/follow-ups/{id}/messages") List<Map<String, Object>> messages(@PathVariable String id) { return app.by("messages", "followUpId", id); }
     @PutMapping("/messages/{id}") Map<String, Object> updateMessage(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("messages", id, b); }
-    @PatchMapping("/messages/{id}/copy") Map<String, Object> copyMessage(@PathVariable String id) { return app.update("messages", id, Map.of("deliveryStatus", "COPIED")); }
-    @PostMapping("/messages/{id}/send") ResponseEntity<Map<String, Object>> sendMessage(@PathVariable String id, @RequestBody(required=false) Map<String, Object> b) { return ResponseEntity.accepted().body(app.update("messages", id, Map.of("deliveryStatus", "SENT"))); }
+    @PatchMapping("/messages/{id}/copy") Map<String, Object> copyMessage(@PathVariable String id) { return app.update("messages", id, Map.of("deliveryStatus", "COPIED", "sentAt", java.time.Instant.now().toString())); }
+    @PostMapping("/messages/{id}/send") ResponseEntity<Map<String, Object>> sendMessage(@PathVariable String id, @RequestBody(required=false) Map<String, Object> b) { return ResponseEntity.accepted().body(app.update("messages", id, Map.of("deliveryStatus", "SENDING", "sentAt", java.time.Instant.now().toString()))); }
     @PostMapping("/messages/delivery-callback") Map<String, Object> callback(
             @RequestHeader(value="X-Webhook-Signature", required=false) String signature,
             @RequestBody Map<String, Object> b) { return callbacks.apply(signature, b); }

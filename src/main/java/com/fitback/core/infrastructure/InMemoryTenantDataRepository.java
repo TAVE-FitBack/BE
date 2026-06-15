@@ -1,4 +1,4 @@
-package com.fitback.core.domain;
+package com.fitback.core.infrastructure;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -12,8 +12,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import com.fitback.core.application.port.TenantDataRepository;
+
 @Component
-public class FitbackStore {
+public class InMemoryTenantDataRepository implements TenantDataRepository {
 
     private final Map<String, Map<UUID, Map<String, Object>>> collections = new ConcurrentHashMap<>();
     private final Map<String, Object> singletons = new ConcurrentHashMap<>();
@@ -103,7 +105,7 @@ public class FitbackStore {
     }
 
     private String collectionKey(String collection) {
-        if (collection.equals("users") || collection.equals("refreshTokens")) {
+        if (collection.equals("users") || collection.equals("refreshTokens") || collection.equals("passwordResetTokens")) {
             return "global:" + collection;
         }
         return tenantId() + ":" + collection;
