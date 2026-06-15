@@ -168,7 +168,24 @@ public class AuthService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
 
-        String newAccessToken = jwtTokenProvider.generateAccessToken(user.getEmail());
-        return new TokenRefreshResponse(newAccessToken);
+        String newAccessToken =
+                jwtTokenProvider.generateAccessToken(user.getEmail());
+
+        String newRefreshToken =
+                jwtTokenProvider.generateRefreshToken(user.getEmail());
+
+        long expirationSeconds = jwtTokenProvider.getRefreshExpiration() / 1000;
+
+        redisTemplate.opsForValue().set(
+                REFRESH_TOKEN_PREFIX + user.getEmail(),
+                newRefreshToken,
+                expirationSeconds,
+                TimeUnit.SECONDS
+        );
+
+        return new TokenRefreshResponse(
+                newAccessToken,
+                newRefreshToken
+        );
     }
 }
