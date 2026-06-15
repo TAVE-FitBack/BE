@@ -27,8 +27,8 @@ public class AiTextAdapter {
     public List<Map<String, Object>> generateMessages(String customerName) {
         String name = customerName == null ? "고객" : customerName;
         return List.of(
-                Map.of("type", "FRIENDLY", "content", name + "님, 상담 내용 확인차 연락드렸어요."),
-                Map.of("type", "BENEFIT", "content", name + "님께 맞는 혜택과 일정을 안내드립니다."),
-                Map.of("type", "REMINDER", "content", name + "님, 편하신 시간에 답장 부탁드립니다."));
+                Map.of("versionType", "SHORT", "content", name + "님, 상담 내용 확인차 연락드렸어요."),
+                Map.of("versionType", "STANDARD", "content", name + "님께 맞는 혜택과 일정을 안내드립니다."),
+                Map.of("versionType", "DETAILED", "content", name + "님, 편하신 시간에 답장 부탁드립니다."));
     }
 }

@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fitback.core.domain.FitbackStore;
 import com.fitback.core.infrastructure.AiTextAdapter;
+import com.fitback.global.security.JwtTokenService;
 
 @Service
 public class FitbackApplicationService {
@@ -20,11 +21,14 @@ public class FitbackApplicationService {
     private final FitbackStore store;
     private final AiTextAdapter ai;
     private final PasswordEncoder passwordEncoder;
+    private final JwtTokenService tokens;
 
-    public FitbackApplicationService(FitbackStore store, AiTextAdapter ai, PasswordEncoder passwordEncoder) {
+    public FitbackApplicationService(FitbackStore store, AiTextAdapter ai, PasswordEncoder passwordEncoder,
+            JwtTokenService tokens) {
         this.store = store;
         this.ai = ai;
         this.passwordEncoder = passwordEncoder;
+        this.tokens = tokens;
     }
 
     public Map<String, Object> register(Map<String, Object> body) {
@@ -35,8 +39,8 @@ public class FitbackApplicationService {
         Map<String, Object> user = new LinkedHashMap<>(body);
         user.put("password", passwordEncoder.encode(required(body, "password")));
         user.putIfAbsent("role", "OWNER");
-        store.create("users", user);
-        return tokens(email);
+        Map<String, Object> created = store.create("users", user);
+        return Map.of("userId", created.get("id"), "message", "registration completed");
     }
 
     public Map<String, Object> login(Map<String, Object> body) {
@@ -50,7 +54,7 @@ public class FitbackApplicationService {
     }
 
     public Map<String, Object> tokens(String subject) {
-        return Map.of("accessToken", "access-" + UUID.randomUUID(), "refreshToken", "refresh-" + UUID.randomUUID(),
+        return Map.of("accessToken", tokens.issue(subject), "refreshToken", "refresh-" + UUID.randomUUID(),
                 "user", Map.of("email", subject));
     }
 

@@ -14,8 +14,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
@@ -29,6 +32,9 @@ class ApiContractTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Test
     void mapsEverySpecifiedApiRoute() {
@@ -81,20 +87,32 @@ class ApiContractTest {
         mockMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"owner@fitback.test\",\"password\":\"secret12\",\"name\":\"Owner\"}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty());
+                .andExpect(jsonPath("$.userId").isNotEmpty());
 
-        mockMvc.perform(post("/api/v1/store").contentType(MediaType.APPLICATION_JSON)
+        MvcResult login = mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"owner@fitback.test\",\"password\":\"secret12\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andReturn();
+        String token = objectMapper.readTree(login.getResponse().getContentAsString()).get("accessToken").asText();
+
+        mockMvc.perform(post("/api/v1/store").header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Fitback Gym\",\"storeType\":\"GYM\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("Fitback Gym"));
 
-        String customer = mockMvc.perform(post("/api/v1/customers").contentType(MediaType.APPLICATION_JSON)
+        String customer = mockMvc.perform(post("/api/v1/customers").header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Kim\",\"phoneNum\":\"010-1234-5678\"}"))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         assertThat(customer).contains("Kim");
 
-        mockMvc.perform(get("/api/v1/dashboard/summary"))
+        mockMvc.perform(get("/api/v1/dashboard/summary").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.todayConsultCount").isNumber());
+    }
+
+    @Test
+    void rejectsProtectedRouteWithoutBearerToken() throws Exception {
+        mockMvc.perform(get("/api/v1/customers")).andExpect(status().isUnauthorized());
     }
 }

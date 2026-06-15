@@ -11,6 +11,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import com.fitback.core.domain.FitbackStore;
 import com.fitback.core.infrastructure.AiTextAdapter;
+import com.fitback.global.security.JwtTokenService;
 
 class FitbackApplicationServiceTest {
 
@@ -18,7 +19,8 @@ class FitbackApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FitbackApplicationService(new FitbackStore(), new AiTextAdapter(""), new BCryptPasswordEncoder());
+        service = new FitbackApplicationService(new FitbackStore(), new AiTextAdapter(""), new BCryptPasswordEncoder(),
+                new JwtTokenService("local-development-secret-key-change-me", 86_400_000));
     }
 
     @Test
