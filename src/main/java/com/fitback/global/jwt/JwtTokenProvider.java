@@ -53,6 +53,16 @@ public class JwtTokenProvider {
         return refreshExpiration;
     }
 
+    public long getRemainingExpiration(String token) {
+        try {
+            Date expiry = getClaims(token).getExpiration();
+            long remaining = expiry.getTime() - System.currentTimeMillis();
+            return Math.max(remaining, 0);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     public boolean validateToken(String token) {
         try {
             getClaims(token);

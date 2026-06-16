@@ -37,6 +37,7 @@ public class AuthService {
 
     private static final String REFRESH_TOKEN_PREFIX = "RT:";
     private static final String EMAIL_VERIFY_PREFIX = "EV:";
+    private static final String BLACKLIST_PREFIX = "BL:";
     private static final long EMAIL_VERIFY_EXPIRATION = 60 * 60 * 24L; // 24시간 (초)
 
     /* 회원가입 */
@@ -80,6 +81,8 @@ public class AuthService {
         );
 
         emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+
+        log.info("회원가입 완료 — email: {}, userId: {}", user.getEmail(), user.getId());
 
         return SignupResponse.builder()
                 .userId(user.getId())
@@ -132,6 +135,8 @@ public class AuthService {
                 TimeUnit.SECONDS
         );
 
+        log.info("로그인 성공 — email: {}, userId: {}", user.getEmail(), user.getId());
+
         return LoginResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
@@ -183,9 +188,30 @@ public class AuthService {
                 TimeUnit.SECONDS
         );
 
+        log.info("토큰 갱신 완료 — email: {}", email);
+
         return new TokenRefreshResponse(
                 newAccessToken,
                 newRefreshToken
         );
+    }
+
+    /* 로그아웃 */
+    public void logout(String email, String accessToken) {
+        redisTemplate.delete(REFRESH_TOKEN_PREFIX + email);
+
+        if (accessToken != null && jwtTokenProvider.validateToken(accessToken)) {
+            long remainingMs = jwtTokenProvider.getRemainingExpiration(accessToken);
+            if (remainingMs > 0) {
+                redisTemplate.opsForValue().set(
+                        BLACKLIST_PREFIX + accessToken,
+                        "logout",
+                        remainingMs,
+                        TimeUnit.MILLISECONDS
+                );
+            }
+        }
+
+        log.info("로그아웃 완료 — email: {}", email);
     }
 }

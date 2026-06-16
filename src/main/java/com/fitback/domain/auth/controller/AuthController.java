@@ -10,10 +10,13 @@ import com.fitback.domain.auth.service.AuthService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -59,5 +62,25 @@ public class AuthController {
             @Valid @RequestBody TokenRefreshRequest request
     ) {
         return ResponseEntity.ok(ApiResponse.onSuccess(authService.refresh(request)));
+    }
+
+    /* 로그아웃 */
+    @PostMapping("/logout")
+    @Operation(summary = "로그아웃", description = "Refresh Token 삭제 및 Access Token 블랙리스트 등록")
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @AuthenticationPrincipal(expression = "user.email") String email,
+            HttpServletRequest request
+    ) {
+        String accessToken = resolveToken(request);
+        authService.logout(email, accessToken);
+        return ResponseEntity.ok(ApiResponse.onSuccess("로그아웃이 완료되었습니다.", null));
+    }
+
+    private String resolveToken(HttpServletRequest request) {
+        String bearer = request.getHeader("Authorization");
+        if (StringUtils.hasText(bearer) && bearer.startsWith("Bearer ")) {
+            return bearer.substring(7);
+        }
+        return null;
     }
 }

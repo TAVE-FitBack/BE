@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -23,21 +24,24 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomUserDetailsService customUserDetailsService;
+    private final StringRedisTemplate redisTemplate;
 
     private static final String AUTHORIZATION_HEADER = "Authorization";
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final String BLACKLIST_PREFIX = "BL:";
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
-                                    FilterChain filterChain)
-            throws ServletException, IOException {
+                                    FilterChain filterChain
+    ) throws ServletException, IOException {
 
         String token = extractToken(request);
 
         if (StringUtils.hasText(token)
                 && jwtTokenProvider.validateToken(token)
-                && jwtTokenProvider.isAccessToken(token)) {  // Access Token만 허용
+                && jwtTokenProvider.isAccessToken(token)
+                && !isBlacklisted(token)) {  // 블랙리스트 체크
 
             String email = jwtTokenProvider.getEmail(token);
             UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
@@ -54,6 +58,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isBlacklisted(String token) {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(BLACKLIST_PREFIX + token));
     }
 
     private String extractToken(HttpServletRequest request) {
