@@ -5,24 +5,44 @@ spring:
   application:
     name: fitback
 
-  # 데이터베이스 연결 설정 (.env 환경변수 매핑, 없을 시 콜론 뒤의 기본값 사용)
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/fitback}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
-  # JPA 및 하이버네이트 설정 (PostgreSQL 특화)
   jpa:
     hibernate:
-      ddl-auto: update # 로컬 개발 단계이므로 엔티티 수정 시 테이블 자동 반영
-    show-sql: true     # 실행되는 SQL을 콘솔에 출력
+      ddl-auto: update
+    show-sql: true
     properties:
       hibernate:
-        format_sql: true # 콘솔에 출력되는 SQL을 보기 좋게 정렬
-        dialect: org.hibernate.dialect.PostgreSQLDialect # PostgreSQL 방언 설정
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: Asia/Seoul
 
-# JWT 커스텀 설정
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
 jwt:
   secret: ${JWT_SECRET}
-  expiration: 86400000 # 토큰 유효 시간: 24시간 (밀리초 단위)
+  expiration: 86400000
+  refresh-expiration: 604800000
+
+app:
+  base-url: ${APP_BASE_URL:http://localhost:8080}
