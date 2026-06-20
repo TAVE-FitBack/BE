@@ -25,6 +25,8 @@ public class AiTextAdapter implements AiAnalysisPort {
 
     private final String apiKey;
     private final String baseUrl;
+    private final String analyzePath;
+    private final String messageGeneratePath;
     private final boolean fallbackEnabled;
     private final int maxAttempts;
     private final Duration requestTimeout;
@@ -34,22 +36,32 @@ public class AiTextAdapter implements AiAnalysisPort {
     @Autowired
     public AiTextAdapter(@Value("${ai.api-key:${API_KEY_CODE:}}") String apiKey,
             @Value("${ai.base-url:${AI_BASE_URL:}}") String baseUrl,
-            @Value("${ai.fallback-enabled:false}") boolean fallbackEnabled) {
-        this(apiKey, baseUrl, fallbackEnabled, 2, 10);
-    }
-
-    public AiTextAdapter(String apiKey, String baseUrl, boolean fallbackEnabled, int maxAttempts, long timeoutSeconds) {
+            @Value("${ai.analyze-path:/ai/v1/consultations/analyze}") String analyzePath,
+            @Value("${ai.message-generate-path:/messages/generate}") String messageGeneratePath,
+            @Value("${ai.fallback-enabled:false}") boolean fallbackEnabled,
+            @Value("${ai.max-attempts:2}") int maxAttempts,
+            @Value("${ai.timeout-seconds:10}") long timeoutSeconds) {
         this.apiKey = apiKey == null ? "" : apiKey;
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
+        this.analyzePath = normalizePath(analyzePath);
+        this.messageGeneratePath = normalizePath(messageGeneratePath);
         this.fallbackEnabled = fallbackEnabled;
         this.maxAttempts = Math.max(1, maxAttempts);
         this.requestTimeout = Duration.ofSeconds(Math.max(1, timeoutSeconds));
         this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     }
 
+    public AiTextAdapter(String apiKey, String baseUrl, boolean fallbackEnabled, int maxAttempts, long timeoutSeconds) {
+        this(apiKey, baseUrl, "/ai/v1/consultations/analyze", "/messages/generate", fallbackEnabled, maxAttempts, timeoutSeconds);
+    }
+
+    public AiTextAdapter(String apiKey, String baseUrl, boolean fallbackEnabled) {
+        this(apiKey, baseUrl, fallbackEnabled, 2, 10);
+    }
+
     public Map<String, Object> analyze(String rawText) {
         if (configured()) {
-            return post("/analyze", Map.of("rawText", rawText == null ? "" : rawText),
+            return post(analyzePath, Map.of("rawText", rawText == null ? "" : rawText),
                     new TypeReference<Map<String, Object>>() {});
         }
         requireFallback();
@@ -58,7 +70,7 @@ public class AiTextAdapter implements AiAnalysisPort {
 
     public List<Map<String, Object>> generateMessages(String customerName) {
         if (configured()) {
-            return post("/messages/generate", Map.of("customerName", customerName == null ? "" : customerName),
+            return post(messageGeneratePath, Map.of("customerName", customerName == null ? "" : customerName),
                     new TypeReference<List<Map<String, Object>>>() {});
         }
         requireFallback();
@@ -74,6 +86,13 @@ public class AiTextAdapter implements AiAnalysisPort {
 
     private boolean configured() {
         return !apiKey.isBlank() && !baseUrl.isBlank();
+    }
+
+    private String normalizePath(String path) {
+        if (path == null || path.isBlank()) {
+            return "/";
+        }
+        return path.startsWith("/") ? path : "/" + path;
     }
 
     private void requireFallback() {
