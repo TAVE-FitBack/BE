@@ -1,62 +1,25 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+const AUTH_STORAGE_KEY = "fitback.session";
 
-const sampleCustomers = [
-  {
-    id: "sample-1",
-    name: "김서연",
-    phoneNum: "***-****-8821",
-    status: "UNREGISTERED",
-    leadTemperature: "HOT",
-    priorityScore: 90,
-    primaryReason: "PRICE",
-    nextBestAction: "오늘 18시 전 체험권 혜택과 PT 첫 회 안내 메시지 발송",
-    aiInsight: {
-      leadTemperature: "HOT",
-      temperatureBasis: "즉시 시작 의사와 시간 제약이 함께 확인됨",
-      priorityScore: 90,
-      analysisStatus: "COMPLETED"
-    },
-    signals: [
-      { signalType: "BUYING_INTENT", signalValue: "바로 등록 가능", confidence: 0.91 },
-      { signalType: "TIME_CONSTRAINT", signalValue: "퇴근 후 7시 선호", confidence: 0.82 }
-    ],
-    consultations: [
-      { id: "consult-1", summary: "체중 감량 목적. 시설 청결과 가격을 비교 중.", rawText: "운동은 처음이고 퇴근 후 7시 가능. 가격만 맞으면 바로 등록하고 싶음." }
-    ]
-  },
-  {
-    id: "sample-2",
-    name: "박민준",
-    phoneNum: "***-****-1029",
-    status: "PENDING",
-    leadTemperature: "WARM",
-    priorityScore: 70,
-    primaryReason: "SCHEDULE",
-    nextBestAction: "주말 수업 가능 시간표를 먼저 제안",
-    aiInsight: {
-      leadTemperature: "WARM",
-      temperatureBasis: "관심은 높지만 일정 제약이 큼",
-      priorityScore: 70,
-      analysisStatus: "COMPLETED"
-    },
-    signals: [
-      { signalType: "INTEREST", signalValue: "그룹 PT 문의", confidence: 0.76 }
-    ],
-    consultations: [
-      { id: "consult-2", summary: "그룹 PT 관심. 주중 시간이 어려움.", rawText: "주말에 가능한 수업이 있으면 보고 싶음." }
-    ]
+function readStoredSession() {
+  try {
+    return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY));
+  } catch {
+    return null;
   }
-];
+}
 
-const serviceOptions = ["PT 1:1", "그룹 PT", "필라테스", "헬스 이용권"];
-
-async function api(path, options = {}) {
+async function api(path, options = {}, token = null) {
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {})
+    },
     ...options
   });
   if (!response.ok) {
@@ -65,48 +28,86 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
-function fallbackAnalysis(rawText) {
-  const hot = /바로|등록|오늘|결제|시작/.test(rawText);
-  return {
-    saved: false,
-    stateless: true,
-    summary: rawText ? rawText.slice(0, 72) : "상담 메모를 입력하면 AI가 핵심 내용을 정리합니다.",
-    leadTemperature: hot ? "HOT" : "WARM",
-    temperature: hot ? "HOT" : "WARM",
-    temperatureBasis: hot ? "즉시 행동 의향 키워드가 포함됨" : "관심은 있으나 추가 설득 정보가 필요함",
-    nextBestAction: hot ? "오늘 안에 체험권 혜택을 제안하고 결제 링크를 발송" : "비교 중인 조건을 확인하고 시간표와 가격표를 먼저 전달",
-    persuasionPoints: ["목표 달성 기간을 짧게 제시", "첫 방문 시 체성분 분석 제공", "관심 서비스와 연결된 프로모션 안내"],
-    missingQuestions: ["희망 방문 시간", "예산 범위", "최근 운동 경험"],
-    reasons: [
-      { reasonType: hot ? "PRICE" : "SCHEDULE", reasonRole: "PRIMARY", reasonBasis: "상담 메모에서 우선 검토 조건으로 확인" }
-    ],
-    signals: [
-      { signalType: "INTENT", signalValue: hot ? "즉시 등록 가능성" : "관심 단계", confidence: hot ? 0.9 : 0.68 },
-      { signalType: "FOLLOW_UP", signalValue: "추가 안내 필요", confidence: 0.74 }
-    ]
-  };
-}
-
 function App() {
+  const [session, setSession] = useState(readStoredSession);
   const [activeView, setActiveView] = useState("consultation");
-  const [customers, setCustomers] = useState(sampleCustomers);
-  const [selectedId, setSelectedId] = useState(sampleCustomers[0].id);
+  const [customers, setCustomers] = useState([]);
+  const [services, setServices] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
   const [form, setForm] = useState({
-    name: "이하늘",
-    phoneNum: "010-7788-9911",
-    serviceIds: ["PT 1:1"],
-    inflowPath: "네이버 검색",
-    rawText: "퇴근 후 7시에 운동하고 싶고 가격이 맞으면 바로 시작 가능. 다이어트 목적이고 혼자 운동하는 방법을 잘 모름."
+    name: "",
+    phoneNum: "",
+    serviceIds: [],
+    inflowPath: "",
+    rawText: ""
   });
-  const [analysis, setAnalysis] = useState(fallbackAnalysis(form.rawText));
+  const [analysis, setAnalysis] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
-  const [status, setStatus] = useState("샘플 데이터로 시작했습니다.");
+  const [status, setStatus] = useState("로그인 후 실제 데이터를 불러옵니다.");
   const [isBusy, setIsBusy] = useState(false);
 
+  const token = session?.accessToken || null;
   const selectedCustomer = useMemo(
-    () => customers.find((customer) => customer.id === selectedId) || customers[0],
+    () => customers.find((customer) => customer.id === selectedId) || customers[0] || null,
     [customers, selectedId]
   );
+
+  const loadCustomers = async (preferredId = null) => {
+    const result = await api("/customers", {}, token);
+    const content = result.content || [];
+    setCustomers(content.map(normalizeCustomer));
+    setSelectedId(preferredId || content[0]?.id || null);
+    setStatus(content.length ? "고객 목록을 불러왔습니다." : "등록된 고객이 없습니다.");
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    loadCustomers()
+      .catch(() => setStatus("고객 목록을 불러오지 못했습니다."));
+    api("/store/services", {}, token)
+      .then((result) => setServices(result || []))
+      .catch(() => setServices([]));
+  }, [token]);
+
+  const authenticate = (nextSession) => {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession));
+    setSession(nextSession);
+    setStatus("로그인되었습니다.");
+  };
+
+  const logout = () => {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setSession(null);
+    setActiveView("consultation");
+    setCustomers([]);
+    setServices([]);
+    setSelectedId(null);
+    setAnalysis(null);
+  };
+
+  const login = async (credentials) => {
+    const result = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(credentials)
+    });
+    authenticate({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      user: result.user || { email: credentials.email }
+    });
+  };
+
+  const register = async (credentials) => {
+    await api("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        email: credentials.email,
+        password: credentials.password,
+        name: credentials.name
+      })
+    });
+    await login(credentials);
+  };
 
   const updateForm = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
@@ -122,14 +123,12 @@ function App() {
   const checkDuplicate = async () => {
     setIsBusy(true);
     try {
-      const result = await api(`/consultations/check-duplicate?phoneNum=${encodeURIComponent(form.phoneNum)}&name=${encodeURIComponent(form.name)}`);
+      const result = await api(`/consultations/check-duplicate?phoneNum=${encodeURIComponent(form.phoneNum)}&name=${encodeURIComponent(form.name)}`, {}, token);
       setDuplicate(result);
       setStatus(result.isDuplicate ? "기존 고객이 확인되었습니다." : "신규 상담 등록이 가능합니다.");
     } catch {
-      const found = customers.find((customer) => customer.phoneNum.endsWith(form.phoneNum.slice(-4)));
-      const result = { isDuplicate: Boolean(found), customer: found, canProceed: !found };
-      setDuplicate(result);
-      setStatus(found ? "샘플 데이터에서 기존 고객을 찾았습니다." : "샘플 기준 신규 고객입니다.");
+      setDuplicate(null);
+      setStatus("중복 확인 요청에 실패했습니다.");
     } finally {
       setIsBusy(false);
     }
@@ -141,12 +140,11 @@ function App() {
       const result = await api("/consultations/analyze-preview", {
         method: "POST",
         body: JSON.stringify({ ...form, rawText: form.rawText })
-      });
+      }, token);
       setAnalysis(result);
       setStatus("AI 미리보기가 완료되었습니다.");
     } catch {
-      setAnalysis(fallbackAnalysis(form.rawText));
-      setStatus("백엔드 연결 전이라 로컬 AI 샘플 분석을 표시합니다.");
+      setStatus("AI 미리보기 요청에 실패했습니다.");
     } finally {
       setIsBusy(false);
     }
@@ -158,46 +156,31 @@ function App() {
       const result = await api("/consultations", {
         method: "POST",
         body: JSON.stringify({ ...form, aiResult: analysis })
-      });
-      const saved = result.customer || {
-        id: result.customerId,
-        name: form.name,
-        phoneNum: maskPhone(form.phoneNum),
-        status: "UNREGISTERED",
-        leadTemperature: analysis.leadTemperature || analysis.temperature,
-        priorityScore: analysis.leadTemperature === "HOT" ? 90 : 70,
-        primaryReason: analysis.reasons?.[0]?.reasonType,
-        nextBestAction: analysis.nextBestAction,
-        aiInsight: analysis,
-        signals: analysis.signals || [],
-        consultations: [result.consultation]
-      };
-      setCustomers((prev) => [normalizeCustomer(saved), ...prev]);
-      setSelectedId(saved.id || result.customerId);
+      }, token);
+      if (result.customer) {
+        const saved = normalizeCustomer(result.customer);
+        setCustomers((prev) => [saved, ...prev]);
+        setSelectedId(saved.id);
+      } else {
+        await loadCustomers(result.customerId);
+      }
       setActiveView("customers");
       setStatus("상담 기록과 AI 인사이트를 저장했습니다.");
     } catch {
-      const saved = normalizeCustomer({
-        id: `local-${Date.now()}`,
-        name: form.name,
-        phoneNum: maskPhone(form.phoneNum),
-        status: "UNREGISTERED",
-        leadTemperature: analysis.leadTemperature || analysis.temperature,
-        priorityScore: analysis.leadTemperature === "HOT" ? 90 : 70,
-        primaryReason: analysis.reasons?.[0]?.reasonType,
-        nextBestAction: analysis.nextBestAction,
-        aiInsight: analysis,
-        signals: analysis.signals || [],
-        consultations: [{ id: `consult-${Date.now()}`, summary: analysis.summary, rawText: form.rawText }]
-      });
-      setCustomers((prev) => [saved, ...prev]);
-      setSelectedId(saved.id);
-      setActiveView("customers");
-      setStatus("백엔드 연결 전이라 로컬 목록에 저장했습니다.");
+      setStatus("상담 저장 요청에 실패했습니다.");
     } finally {
       setIsBusy(false);
     }
   };
+
+  if (!session) {
+    return (
+      <AuthScreen
+        onLogin={login}
+        onRegister={register}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -216,8 +199,9 @@ function App() {
         </nav>
         <div className="status-card">
           <span className="dot" />
-          <p>{status}</p>
+          <p>{session.user?.email || "Fitback 사용자"} · {status}</p>
         </div>
+        <button className="ghost-button logout-button" onClick={logout}>로그아웃</button>
       </aside>
 
       <section className="workspace">
@@ -236,6 +220,7 @@ function App() {
         {activeView === "consultation" && (
           <ConsultationView
             form={form}
+            services={services}
             analysis={analysis}
             duplicate={duplicate}
             isBusy={isBusy}
@@ -255,7 +240,91 @@ function App() {
   );
 }
 
-function ConsultationView({ form, analysis, duplicate, isBusy, updateForm, toggleService, checkDuplicate, runPreview, saveConsultation }) {
+function AuthScreen({ onLogin, onRegister }) {
+  const [mode, setMode] = useState("login");
+  const [form, setForm] = useState({
+    email: "",
+    password: "",
+    name: ""
+  });
+  const [message, setMessage] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+
+  const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setIsBusy(true);
+    setMessage("");
+    try {
+      if (mode === "login") {
+        await onLogin(form);
+      } else {
+        await onRegister(form);
+      }
+    } catch {
+      setMessage(mode === "login" ? "로그인에 실패했습니다. 계정 정보를 확인하세요." : "계정 생성에 실패했습니다. 다른 이메일을 사용하세요.");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-visual">
+        <div className="brand auth-brand">
+          <span className="brand-mark">F</span>
+          <div>
+            <strong>Fitback</strong>
+            <small>AI 상담 관리</small>
+          </div>
+        </div>
+        <div className="auth-copy">
+          <p className="eyebrow">Consultation Intelligence</p>
+          <h1>Fitback</h1>
+          <p>상담 메모를 고객 인사이트와 후속관리 큐로 연결합니다.</p>
+        </div>
+      </section>
+
+      <section className="auth-panel">
+        <div className="auth-card">
+          <div className="auth-tabs" role="tablist" aria-label="인증 방식">
+            <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>로그인</button>
+            <button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>계정 생성</button>
+          </div>
+          <form onSubmit={submit}>
+            <div>
+              <p className="eyebrow">{mode === "login" ? "Welcome Back" : "Create Account"}</p>
+              <h2>{mode === "login" ? "로그인" : "관리자 계정 생성"}</h2>
+            </div>
+            {mode === "register" && (
+              <label>
+                이름
+                <input value={form.name} onChange={(event) => update("name", event.target.value)} autoComplete="name" required />
+              </label>
+            )}
+            <label>
+              이메일
+              <input type="email" value={form.email} onChange={(event) => update("email", event.target.value)} autoComplete="email" required />
+            </label>
+            <label>
+              비밀번호
+              <input type="password" value={form.password} onChange={(event) => update("password", event.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} required />
+            </label>
+            {message && <div className="notice warning">{message}</div>}
+            <div className="auth-actions">
+              <button className="primary-button" type="submit" disabled={isBusy}>
+                {mode === "login" ? "로그인" : "계정 생성 후 시작"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ConsultationView({ form, services, analysis, duplicate, isBusy, updateForm, toggleService, checkDuplicate, runPreview, saveConsultation }) {
   return (
     <div className="consultation-grid">
       <section className="panel form-panel">
@@ -281,11 +350,15 @@ function ConsultationView({ form, analysis, duplicate, isBusy, updateForm, toggl
           <input value={form.inflowPath} onChange={(event) => updateForm("inflowPath", event.target.value)} />
         </label>
         <div className="service-list" aria-label="관심 서비스">
-          {serviceOptions.map((service) => (
-            <button key={service} className={form.serviceIds.includes(service) ? "selected" : ""} onClick={() => toggleService(service)}>
-              {service}
+          {services.length === 0 && <span className="inline-empty">등록된 서비스가 없습니다.</span>}
+          {services.map((service) => {
+            const serviceId = String(service.id || service.name);
+            return (
+            <button key={serviceId} className={form.serviceIds.includes(serviceId) ? "selected" : ""} onClick={() => toggleService(serviceId)}>
+              {service.name || serviceId}
             </button>
-          ))}
+            );
+          })}
         </div>
         {duplicate && (
           <div className={duplicate.isDuplicate ? "notice warning" : "notice success"}>
@@ -308,35 +381,55 @@ function ConsultationView({ form, analysis, duplicate, isBusy, updateForm, toggl
             <p className="eyebrow">Step 02</p>
             <h2>AI 분석 결과</h2>
           </div>
-          <TemperatureBadge value={analysis.leadTemperature || analysis.temperature} />
+          <TemperatureBadge value={analysis?.leadTemperature || analysis?.temperature} />
         </div>
-        <div className="summary-box">{analysis.summary}</div>
-        <div className="insight-grid">
-          <Insight label="판단 근거" value={analysis.temperatureBasis} />
-          <Insight label="Next Best Action" value={analysis.nextBestAction} />
-        </div>
-        <div className="chip-section">
-          <h3>설득 포인트</h3>
-          <div className="chips">
-            {(analysis.persuasionPoints || []).map((item) => <span key={item}>{item}</span>)}
-          </div>
-        </div>
-        <div className="signal-list">
-          <h3>상담 신호</h3>
-          {(analysis.signals || []).map((signal, index) => (
-            <div className="signal-item" key={`${signal.signalType}-${index}`}>
-              <strong>{signal.signalType}</strong>
-              <span>{signal.signalValue}</span>
-              <small>{Math.round((signal.confidence || 0.7) * 100)}%</small>
+        {analysis ? (
+          <>
+            <div className="summary-box">{analysis.summary}</div>
+            <div className="insight-grid">
+              <Insight label="판단 근거" value={analysis.temperatureBasis} />
+              <Insight label="Next Best Action" value={analysis.nextBestAction} />
             </div>
-          ))}
-        </div>
+            <div className="chip-section">
+              <h3>설득 포인트</h3>
+              <div className="chips">
+                {(analysis.persuasionPoints || []).map((item) => <span key={item}>{item}</span>)}
+              </div>
+            </div>
+            <div className="signal-list">
+              <h3>상담 신호</h3>
+              {(analysis.signals || []).map((signal, index) => (
+                <div className="signal-item" key={`${signal.signalType}-${index}`}>
+                  <strong>{signal.signalType}</strong>
+                  <span>{signal.signalValue}</span>
+                  <small>{Math.round((Number(signal.confidence) || 0.7) * 100)}%</small>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="empty-state">
+            <strong>AI 분석 결과가 없습니다.</strong>
+            <span>상담 메모를 입력한 뒤 미리보기를 실행하세요.</span>
+          </div>
+        )}
       </section>
     </div>
   );
 }
 
 function CustomerView({ customers, selectedCustomer, setSelectedId }) {
+  if (!selectedCustomer) {
+    return (
+      <section className="panel detail-panel">
+        <div className="empty-state">
+          <strong>등록된 고객이 없습니다.</strong>
+          <span>상담 등록에서 첫 고객을 저장하면 인사이트 목록이 생성됩니다.</span>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div className="customer-layout">
       <section className="panel list-panel">
@@ -410,6 +503,12 @@ function FollowupView({ customers }) {
         </div>
       </div>
       <div className="followup-grid">
+        {targets.length === 0 && (
+          <div className="empty-state">
+            <strong>후속관리 대상이 없습니다.</strong>
+            <span>상담 저장 후 추천 행동이 생성되면 이곳에 표시됩니다.</span>
+          </div>
+        )}
         {targets.map((customer) => (
           <article key={customer.id} className="followup-item">
             <div>

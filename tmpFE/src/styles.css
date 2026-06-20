@@ -42,6 +42,88 @@ button {
   min-height: 100vh;
 }
 
+.auth-shell {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+  min-height: 100vh;
+}
+
+.auth-visual {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 40px;
+  padding: 32px;
+  border-right: 1px solid var(--line);
+  background: #161616;
+}
+
+.auth-brand {
+  align-self: flex-start;
+}
+
+.auth-copy {
+  max-width: 560px;
+}
+
+.auth-copy h1 {
+  margin-bottom: 18px;
+  font-size: clamp(54px, 9vw, 112px);
+}
+
+.auth-copy p:last-child {
+  max-width: 420px;
+  color: #d8d8d8;
+  line-height: 1.6;
+}
+
+.auth-panel {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(100%, 460px);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.auth-card form {
+  display: grid;
+  gap: 2px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.auth-tabs button {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #141414;
+  font-weight: 800;
+}
+
+.auth-tabs .active {
+  border-color: var(--lime);
+  background: rgba(215, 255, 63, 0.12);
+}
+
+.auth-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -120,6 +202,10 @@ label,
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
+}
+
+.logout-button {
+  width: 100%;
 }
 
 .status-card p {
@@ -289,6 +375,16 @@ textarea:focus {
 
 .service-list button {
   padding: 0 12px;
+}
+
+.inline-empty {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px dashed #484848;
+  border-radius: 8px;
+  color: var(--muted);
 }
 
 .notice {
@@ -522,9 +618,35 @@ button:disabled {
   gap: 16px;
 }
 
+.empty-state {
+  display: grid;
+  min-height: 180px;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  border: 1px dashed #484848;
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-state strong {
+  color: var(--text);
+}
+
 @media (max-width: 1120px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .auth-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-visual {
+    min-height: 320px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .sidebar {
@@ -589,5 +711,9 @@ button:disabled {
   .secondary-button,
   .ghost-button {
     width: 100%;
+  }
+
+  .auth-panel {
+    min-height: auto;
   }
 }
