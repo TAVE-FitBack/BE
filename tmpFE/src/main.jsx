@@ -14,16 +14,29 @@ function readStoredSession() {
 }
 
 async function api(path, options = {}, token = null) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {})
-    },
-    ...options
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {})
+      },
+      ...options
+    });
+  } catch {
+    throw new Error("백엔드 서버에 연결할 수 없습니다.");
+  }
   if (!response.ok) {
-    throw new Error(await response.text());
+    const rawMessage = await response.text();
+    let message = rawMessage;
+    try {
+      const parsed = JSON.parse(rawMessage);
+      message = parsed.message || parsed.error || parsed.code || rawMessage;
+    } catch {
+      message = rawMessage;
+    }
+    throw new Error(message || `요청에 실패했습니다. (${response.status})`);
   }
   return response.status === 204 ? null : response.json();
 }
@@ -262,8 +275,8 @@ function AuthScreen({ onLogin, onRegister }) {
       } else {
         await onRegister(form);
       }
-    } catch {
-      setMessage(mode === "login" ? "로그인에 실패했습니다. 계정 정보를 확인하세요." : "계정 생성에 실패했습니다. 다른 이메일을 사용하세요.");
+    } catch (error) {
+      setMessage(error.message || (mode === "login" ? "로그인에 실패했습니다. 계정 정보를 확인하세요." : "계정 생성에 실패했습니다."));
     } finally {
       setIsBusy(false);
     }
