@@ -194,6 +194,27 @@ class ApiContractTest {
     }
 
     @Test
+    void preservesAuthenticationEstablishedByTheLegacyJwtFilter() throws Exception {
+        var established = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                "legacy-user", null, java.util.List.of());
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(established);
+        try {
+            var filter = new com.fitback.global.security.JwtAuthenticationFilter(
+                    new com.fitback.global.security.JwtTokenService("local-development-secret-key-change-me", 60_000));
+            var request = new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/auth/logout");
+            request.addHeader("Authorization", "Bearer invalid-for-core-filter");
+
+            filter.doFilter(request, new org.springframework.mock.web.MockHttpServletResponse(),
+                    (servletRequest, servletResponse) -> { });
+
+            assertThat(org.springframework.security.core.context.SecurityContextHolder.getContext()
+                    .getAuthentication()).isSameAs(established);
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
     void isolatesCustomerDataByJwtStoreId() throws Exception {
         String first = registerAndLogin("first@fitback.test");
         String second = registerAndLogin("second@fitback.test");
