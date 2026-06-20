@@ -46,3 +46,10 @@ jwt:
 
 app:
   base-url: ${APP_BASE_URL:http://localhost:8080}
+
+ai:
+  api-key: ${API_KEY_CODE:}
+  base-url: ${AI_BASE_URL:}
+  fallback-enabled: ${AI_FALLBACK_ENABLED:false}
+  max-attempts: ${AI_MAX_ATTEMPTS:2}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:10}

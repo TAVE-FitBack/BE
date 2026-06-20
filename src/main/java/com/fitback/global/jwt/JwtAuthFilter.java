@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -23,7 +24,7 @@ import java.io.IOException;
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
-    private final CustomUserDetailsService customUserDetailsService;
+    private final ObjectProvider<CustomUserDetailsService> customUserDetailsService;
     private final StringRedisTemplate redisTemplate;
 
     private static final String AUTHORIZATION_HEADER = "Authorization";
@@ -44,7 +45,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 && !isBlacklisted(token)) {  // 블랙리스트 체크
 
             String email = jwtTokenProvider.getEmail(token);
-            UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
+            CustomUserDetailsService userDetailsService = customUserDetailsService.getIfAvailable();
+            if (userDetailsService == null) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(

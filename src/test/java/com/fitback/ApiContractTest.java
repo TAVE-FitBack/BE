@@ -20,9 +20,10 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest(properties = {
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration",
+@SpringBootTest(classes = TestFitbackApplication.class, properties = {
+        "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+                + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
+        "fitback.jpa-auditing.enabled=false",
         "jwt.secret=local-development-secret-key-change-me",
         "ai.fallback-enabled=true"
 })
@@ -56,6 +57,9 @@ class ApiContractTest {
                 "GET /api/v1/customers/{customerId}", "PUT /api/v1/customers/{customerId}",
                 "DELETE /api/v1/customers/{customerId}", "GET /api/v1/customers/{customerId}/consultations",
                 "POST /api/v1/customers/{customerId}/consultations",
+                "GET /api/v1/consultations/check-duplicate",
+                "POST /api/v1/consultations/analyze-preview",
+                "POST /api/v1/consultations",
                 "GET /api/v1/consultations/{consultationId}",
                 "POST /api/v1/consultations/{consultationId}/analyze",
                 "PUT /api/v1/consultations/{consultationId}",
@@ -111,6 +115,46 @@ class ApiContractTest {
         mockMvc.perform(get("/api/v1/dashboard/summary").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.todayConsultCount").isNumber());
+    }
+
+    @Test
+    void supportsDrawioConsultationPreviewSaveAndPollingWorkflow() throws Exception {
+        String token = registerAndLogin("drawio@fitback.test");
+
+        mockMvc.perform(get("/api/v1/consultations/check-duplicate")
+                        .header("Authorization", "Bearer " + token)
+                        .param("phoneNum", "010-7777-8888"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isDuplicate").value(false));
+
+        mockMvc.perform(post("/api/v1/consultations/analyze-preview")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rawText\":\"바로 등록하고 싶고 사우나 가능 시간을 알고 싶어요\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.saved").value(false))
+                .andExpect(jsonPath("$.summary").isNotEmpty());
+
+        MvcResult saved = mockMvc.perform(post("/api/v1/consultations")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Bae\",\"phoneNum\":\"010-7777-8888\",\"rawText\":\"바로 등록하고 싶고 사우나 가능 시간을 알고 싶어요\",\"serviceIds\":[\"day-pass\"]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.analysisStatus").value("COMPLETED"))
+                .andReturn();
+        String customerId = objectMapper.readTree(saved.getResponse().getContentAsString()).get("customerId").asText();
+
+        mockMvc.perform(get("/api/v1/customers")
+                        .header("Authorization", "Bearer " + token)
+                        .param("ids", customerId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.polling").value(true))
+                .andExpect(jsonPath("$.content[0].leadTemperature").value("HOT"));
+
+        mockMvc.perform(get("/api/v1/customers/" + customerId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.aiInsight.leadTemperature").value("HOT"))
+                .andExpect(jsonPath("$.signals.length()").value(2));
     }
 
     @Test

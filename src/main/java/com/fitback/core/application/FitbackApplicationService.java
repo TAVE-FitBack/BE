@@ -2,6 +2,7 @@ package com.fitback.core.application;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -122,6 +123,10 @@ public class FitbackApplicationService {
         return store.get(collection, id);
     }
 
+    public Map<String, Object> customerDetail(String id) {
+        return enrichCustomer(store.get("customers", id));
+    }
+
     public Map<String, Object> update(String collection, String id, Map<String, Object> body) {
         return store.update(collection, id, body);
     }
@@ -139,6 +144,7 @@ public class FitbackApplicationService {
         Map<String, Object> data = new LinkedHashMap<>(body);
         data.put("customerId", customerId);
         data.putIfAbsent("status", "PENDING_ANALYSIS");
+        data.putIfAbsent("analysisStatus", "PENDING");
         Map<String, Object> consultation = store.create("consultations", data);
         Map<String, Object> followUp = new LinkedHashMap<>();
         followUp.put("customerId", customerId);
@@ -148,18 +154,106 @@ public class FitbackApplicationService {
         return consultation;
     }
 
+    public Map<String, Object> checkConsultationDuplicate(String phoneNum, String name) {
+        List<Map<String, Object>> matches = phoneNum == null || phoneNum.isBlank()
+                ? List.of()
+                : store.matching("customers", "phoneNum", phoneNum);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("isDuplicate", !matches.isEmpty());
+        result.put("canProceed", matches.isEmpty());
+        result.put("message", matches.isEmpty() ? "신규 상담 등록을 진행할 수 있습니다."
+                : "이미 등록된 고객입니다. 기존 고객 재상담 흐름을 사용하세요.");
+        result.put("phoneNum", phoneNum);
+        result.put("name", name);
+        if (!matches.isEmpty()) {
+            result.put("customer", maskCustomerListItem(matches.get(0)));
+        }
+        return result;
+    }
+
+    public Map<String, Object> analyzeConsultationPreview(Map<String, Object> body) {
+        String rawText = String.valueOf(body.getOrDefault("rawText", body.getOrDefault("quickMemo", "")));
+        Map<String, Object> analysis = new LinkedHashMap<>(ai.analyze(rawText));
+        analysis.put("stateless", true);
+        analysis.put("saved", false);
+        analysis.put("analyzedAt", Instant.now().toString());
+        return analysis;
+    }
+
+    @Transactional
+    public Map<String, Object> createConsultationRecord(Map<String, Object> body) {
+        String phoneNum = String.valueOf(body.getOrDefault("phoneNum", body.getOrDefault("phoneNumber", "")));
+        if (!phoneNum.isBlank() && !store.matching("customers", "phoneNum", phoneNum).isEmpty()) {
+            throw new IllegalArgumentException("duplicate customer phone number");
+        }
+
+        Map<String, Object> customer = new LinkedHashMap<>();
+        customer.put("name", body.getOrDefault("name", body.getOrDefault("customerName", "이름 미상")));
+        customer.put("phoneNum", phoneNum);
+        customer.put("inflowPath", body.getOrDefault("inflowPath", body.getOrDefault("route", "OTHER")));
+        customer.put("status", body.getOrDefault("status", "UNREGISTERED"));
+        customer.put("leadTemperature", null);
+        customer.put("analysisStatus", "PENDING");
+        customer.put("analysisRequestedAt", Instant.now().toString());
+        Map<String, Object> createdCustomer = store.create("customers", customer);
+
+        List<String> serviceIds = normalizeServiceIds(body.get("serviceIds"), body.get("serviceId"));
+        for (String serviceId : serviceIds) {
+            store.create("interests", Map.of("customerId", createdCustomer.get("id"), "serviceId", serviceId));
+        }
+
+        String rawText = String.valueOf(body.getOrDefault("rawText", body.getOrDefault("quickMemo", "")));
+        Map<String, Object> aiResult = body.get("aiResult") instanceof Map<?, ?> map ? cast(map) : ai.analyze(rawText);
+
+        Map<String, Object> consultation = new LinkedHashMap<>();
+        consultation.put("customerId", createdCustomer.get("id"));
+        consultation.put("rawText", rawText);
+        consultation.put("summary", aiResult.getOrDefault("summary", rawText));
+        consultation.put("visitPurpose", body.getOrDefault("visitPurpose", body.get("purpose")));
+        consultation.put("sourceType", "DIRECT");
+        consultation.put("stage", "SAVED");
+        consultation.put("status", "ANALYZED");
+        consultation.put("analysisStatus", "COMPLETED");
+        consultation.put("aiParsedAt", Instant.now().toString());
+        Map<String, Object> createdConsultation = store.create("consultations", consultation);
+
+        persistSignals(createdConsultation, aiResult);
+        persistCustomerInsight(createdCustomer, createdConsultation, aiResult);
+
+        Map<String, Object> followUp = new LinkedHashMap<>();
+        followUp.put("customerId", createdCustomer.get("id"));
+        followUp.put("consultationId", createdConsultation.get("id"));
+        followUp.put("status", "PENDING");
+        followUp.put("recommendContactDate", aiResult.getOrDefault("recommendContactDate", java.time.LocalDate.now().plusDays(1).toString()));
+        store.create("followUps", followUp);
+
+        return Map.of(
+                "customerId", createdCustomer.get("id"),
+                "consultationId", createdConsultation.get("id"),
+                "analysisStatus", "COMPLETED",
+                "customer", enrichCustomer(store.get("customers", String.valueOf(createdCustomer.get("id")))),
+                "consultation", createdConsultation);
+    }
+
     public Map<String, Object> analyzeConsultation(String consultationId) {
         Map<String, Object> consultation = store.get("consultations", consultationId);
         Map<String, Object> analysis = ai.analyze(String.valueOf(consultation.getOrDefault("rawText", "")));
         Map<String, Object> changes = new LinkedHashMap<>(analysis);
         changes.remove("reasons");
+        changes.remove("signals");
         changes.put("aiParsedAt", Instant.now().toString());
         changes.put("status", "ANALYZED");
+        changes.put("analysisStatus", "COMPLETED");
         Map<String, Object> analyzed = store.update("consultations", consultationId, changes);
         String customerId = String.valueOf(consultation.get("customerId"));
         if (analysis.containsKey("temperature")) {
-            store.update("customers", customerId, Map.of("leadTemperature", analysis.get("temperature")));
+            store.update("customers", customerId, Map.of(
+                    "leadTemperature", analysis.get("temperature"),
+                    "analysisStatus", "COMPLETED",
+                    "analyzedAt", Instant.now().toString()));
         }
+        persistSignals(consultation, analysis);
+        persistCustomerInsight(store.get("customers", customerId), consultation, analysis);
         if (analysis.get("reasons") instanceof List<?> reasons && !reasons.isEmpty()) {
             replaceReasons(consultationId, Map.of("reasons", reasons));
         }
@@ -245,6 +339,24 @@ public class FitbackApplicationService {
         int to = Math.min(from + size, filtered.size());
         return Map.of("content", filtered.subList(from, to), "totalElements", filtered.size(),
                 "totalPages", filtered.isEmpty() ? 0 : (filtered.size() + size - 1) / size);
+    }
+
+    public Map<String, Object> customersByIds(String ids) {
+        List<String> requested = Arrays.stream(ids.split(","))
+                .map(String::trim)
+                .filter(id -> !id.isBlank())
+                .toList();
+        List<Map<String, Object>> customers = requested.stream()
+                .map(id -> {
+                    try {
+                        return maskCustomerListItem(enrichCustomer(store.get("customers", id)));
+                    } catch (RuntimeException ignored) {
+                        return null;
+                    }
+                })
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        return Map.of("content", customers, "totalElements", customers.size(), "polling", true);
     }
 
     public List<Map<String, Object>> generateMessages(String followUpId) {
@@ -349,6 +461,83 @@ public class FitbackApplicationService {
             masked.put("phoneNum", "***-****-" + phone.substring(phone.length() - 4));
         }
         return masked;
+    }
+
+    private Map<String, Object> enrichCustomer(Map<String, Object> customer) {
+        Map<String, Object> result = new LinkedHashMap<>(customer);
+        String customerId = String.valueOf(customer.get("id"));
+        store.matching("customerInsights", "customerId", customerId).stream().findFirst()
+                .ifPresent(insight -> result.put("aiInsight", insight));
+        List<Map<String, Object>> reasons = store.matching("reasons", "customerId", customerId);
+        if (!reasons.isEmpty()) {
+            result.put("nonConversionReasons", reasons);
+            result.put("primaryReason", reasons.get(0).get("reasonType"));
+        }
+        List<Map<String, Object>> consultations = store.matching("consultations", "customerId", customerId);
+        result.put("consultations", consultations);
+        if (!consultations.isEmpty()) {
+            String latestConsultationId = String.valueOf(consultations.get(consultations.size() - 1).get("id"));
+            result.put("signals", store.matching("signals", "consultationId", latestConsultationId));
+        }
+        return result;
+    }
+
+    private void persistSignals(Map<String, Object> consultation, Map<String, Object> analysis) {
+        Object value = analysis.get("signals");
+        if (!(value instanceof List<?> signals)) {
+            return;
+        }
+        String consultationId = String.valueOf(consultation.get("id"));
+        store.removeMatching("signals", "consultationId", consultationId);
+        for (Object signal : signals) {
+            Map<String, Object> signalMap = signal instanceof Map<?, ?> map ? new LinkedHashMap<>(cast(map))
+                    : new LinkedHashMap<>(Map.of("signalType", "NOTE", "signalValue", String.valueOf(signal)));
+            signalMap.put("consultationId", consultationId);
+            store.create("signals", signalMap);
+        }
+    }
+
+    private void persistCustomerInsight(Map<String, Object> customer, Map<String, Object> consultation, Map<String, Object> analysis) {
+        String customerId = String.valueOf(customer.get("id"));
+        store.removeMatching("customerInsights", "customerId", customerId);
+        Map<String, Object> insight = new LinkedHashMap<>();
+        insight.put("customerId", customerId);
+        insight.put("consultationId", consultation.get("id"));
+        insight.put("leadTemperature", analysis.getOrDefault("leadTemperature", analysis.get("temperature")));
+        insight.put("temperatureBasis", analysis.get("temperatureBasis"));
+        insight.put("priorityScore", "HOT".equals(String.valueOf(insight.get("leadTemperature"))) ? 90 : 65);
+        insight.put("nextBestAction", analysis.get("nextBestAction"));
+        insight.put("analysisStatus", "COMPLETED");
+        insight.put("analyzedAt", Instant.now().toString());
+        store.create("customerInsights", insight);
+        Map<String, Object> customerChanges = new LinkedHashMap<>();
+        customerChanges.put("leadTemperature", insight.get("leadTemperature"));
+        customerChanges.put("analysisStatus", "COMPLETED");
+        customerChanges.put("priorityScore", insight.get("priorityScore"));
+        customerChanges.put("nextBestAction", insight.get("nextBestAction"));
+        store.update("customers", customerId, customerChanges);
+
+        if (analysis.get("reasons") instanceof List<?> reasons && !reasons.isEmpty()) {
+            List<Map<String, Object>> normalized = new ArrayList<>();
+            for (Object reason : reasons) {
+                Map<String, Object> reasonMap = reason instanceof Map<?, ?> map ? new LinkedHashMap<>(cast(map))
+                        : new LinkedHashMap<>(Map.of("reasonType", String.valueOf(reason), "reasonRole", "PRIMARY"));
+                reasonMap.put("customerId", customerId);
+                reasonMap.put("consultationId", consultation.get("id"));
+                normalized.add(reasonMap);
+            }
+            replaceReasons(String.valueOf(consultation.get("id")), Map.of("reasons", normalized));
+        }
+    }
+
+    private List<String> normalizeServiceIds(Object serviceIds, Object serviceId) {
+        if (serviceIds instanceof List<?> values) {
+            return values.stream().map(String::valueOf).filter(value -> !value.isBlank()).toList();
+        }
+        if (serviceId != null && !String.valueOf(serviceId).isBlank()) {
+            return List.of(String.valueOf(serviceId));
+        }
+        return List.of();
     }
 
     @SuppressWarnings("unchecked")

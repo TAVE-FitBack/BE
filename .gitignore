@@ -60,3 +60,7 @@ logs/
 .idea/tasks.xml
 
 api_spec (1).html
+
+.omx/
+tmpFE/node_modules/
+tmpFE/dist/

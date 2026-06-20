@@ -15,6 +15,7 @@ import com.fitback.global.exception.BusinessException;
 import com.fitback.global.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
+@ConditionalOnBean(UserRepository.class)
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AuthService {

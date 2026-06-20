@@ -7,12 +7,14 @@ import com.fitback.domain.auth.dto.response.LoginResponse;
 import com.fitback.domain.auth.dto.response.SignupResponse;
 import com.fitback.domain.auth.dto.response.TokenRefreshResponse;
 import com.fitback.domain.auth.service.AuthService;
+import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/auth")
+@ConditionalOnBean(UserRepository.class)
 @RequiredArgsConstructor
 @Tag(name = "Auth", description = "인증 API")
 public class AuthController {

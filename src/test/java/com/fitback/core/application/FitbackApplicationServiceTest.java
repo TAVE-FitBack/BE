@@ -40,6 +40,25 @@ class FitbackApplicationServiceTest {
     }
 
     @Test
+    void previewIsStatelessAndFinalSaveCreatesInsightGraph() {
+        Map<String, Object> preview = service.analyzeConsultationPreview(
+                Map.of("rawText", "바로 등록하고 싶고 사우나 가능 시간을 알고 싶어요"));
+        assertThat(preview).containsEntry("saved", false).containsEntry("stateless", true);
+        assertThat(repository.count("customers")).isZero();
+
+        Map<String, Object> saved = service.createConsultationRecord(Map.of(
+                "name", "Bae",
+                "phoneNum", "010-7777-8888",
+                "rawText", "바로 등록하고 싶고 사우나 가능 시간을 알고 싶어요",
+                "serviceIds", List.of("day-pass")));
+
+        String customerId = String.valueOf(saved.get("customerId"));
+        assertThat(service.customerDetail(customerId)).containsEntry("leadTemperature", "HOT");
+        assertThat(service.by("signals", "consultationId", String.valueOf(saved.get("consultationId")))).hasSize(2);
+        assertThat(service.customersByIds(customerId).toString()).contains("HOT");
+    }
+
+    @Test
     void eventTargetsCustomersInterestedInItsService() {
         Map<String, Object> customer = service.create("customers", Map.of("name", "Lee"));
         service.replaceInterests(String.valueOf(customer.get("id")), Map.of("serviceIds", List.of("pt-10")));

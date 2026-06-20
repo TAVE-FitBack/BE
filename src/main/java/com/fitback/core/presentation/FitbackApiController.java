@@ -38,6 +38,7 @@ public class FitbackApiController {
     @PutMapping("/store/settings") Map<String, Object> updateSettings(@RequestBody Map<String, Object> b) { return app.saveSingleton("settings", b); }
 
     @GetMapping("/customers") Map<String, Object> customers(
+            @RequestParam(required=false) String ids,
             @RequestParam(required=false) String status,
             @RequestParam(required=false) String temperature,
             @RequestParam(required=false) String reasonType,
@@ -46,14 +47,25 @@ public class FitbackApiController {
             @RequestParam(defaultValue="desc") String order,
             @RequestParam(defaultValue="0") int page,
             @RequestParam(defaultValue="20") int size) {
+        if (ids != null && !ids.isBlank()) {
+            return app.customersByIds(ids);
+        }
         return app.searchCustomers(status, temperature, reasonType, search, sortBy, order, page, Math.max(1, Math.min(size, 100)));
     }
     @PostMapping("/customers") ResponseEntity<Map<String, Object>> createCustomer(@RequestBody Map<String, Object> b) { Map<String, Object> c = app.create("customers", b); c.put("isDuplicate", false); return created(c); }
-    @GetMapping("/customers/{id}") Map<String, Object> customer(@PathVariable String id) { return app.get("customers", id); }
+    @GetMapping("/customers/{id}") Map<String, Object> customer(@PathVariable String id) { return app.customerDetail(id); }
     @PutMapping("/customers/{id}") Map<String, Object> updateCustomer(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("customers", id, b); }
     @DeleteMapping("/customers/{id}") ResponseEntity<Void> deleteCustomer(@PathVariable String id) { app.deleteCustomer(id); return ResponseEntity.noContent().build(); }
     @GetMapping("/customers/{id}/consultations") List<Map<String, Object>> consultations(@PathVariable String id) { return app.by("consultations", "customerId", id); }
     @PostMapping("/customers/{id}/consultations") ResponseEntity<Map<String, Object>> createConsultation(@PathVariable String id, @RequestBody Map<String, Object> b) { return created(app.createConsultation(id, b)); }
+    @GetMapping("/consultations/check-duplicate") Map<String, Object> checkConsultationDuplicate(
+            @RequestParam(required=false) String phoneNum,
+            @RequestParam(required=false) String phoneNumber,
+            @RequestParam(required=false) String name) {
+        return app.checkConsultationDuplicate(phoneNum == null ? phoneNumber : phoneNum, name);
+    }
+    @PostMapping("/consultations/analyze-preview") Map<String, Object> analyzeConsultationPreview(@RequestBody Map<String, Object> b) { return app.analyzeConsultationPreview(b); }
+    @PostMapping("/consultations") ResponseEntity<Map<String, Object>> createConsultationRecord(@RequestBody Map<String, Object> b) { return created(app.createConsultationRecord(b)); }
     @GetMapping("/consultations/{id}") Map<String, Object> consultation(@PathVariable String id) { return app.get("consultations", id); }
     @PostMapping("/consultations/{id}/analyze") Map<String, Object> analyze(@PathVariable String id) { return app.analyzeConsultation(id); }
     @PutMapping("/consultations/{id}") Map<String, Object> updateConsultation(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("consultations", id, b); }
