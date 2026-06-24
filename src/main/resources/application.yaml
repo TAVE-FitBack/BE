@@ -46,12 +46,14 @@ jwt:
 
 app:
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  auth:
+    email-verification-required: ${AUTH_EMAIL_VERIFICATION_REQUIRED:true}
 
 ai:
   api-key: ${API_KEY_CODE:}
   base-url: ${AI_BASE_URL:}
   analyze-path: ${AI_ANALYZE_PATH:/ai/v1/consultations/analyze}
   message-generate-path: ${AI_MESSAGE_GENERATE_PATH:/messages/generate}
-  fallback-enabled: ${AI_FALLBACK_ENABLED:false}
+  fallback-enabled: ${AI_FALLBACK_ENABLED:true}
   max-attempts: ${AI_MAX_ATTEMPTS:2}
   timeout-seconds: ${AI_TIMEOUT_SECONDS:10}

@@ -335,6 +335,17 @@ label {
   font-weight: 700;
 }
 
+label.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+label.checkbox-field input {
+  width: auto;
+  margin: 0;
+}
+
 input,
 textarea {
   width: 100%;

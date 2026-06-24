@@ -8,99 +8,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fitback.core.application.port.TenantDataRepository;
 import com.fitback.core.application.port.AiAnalysisPort;
-import com.fitback.global.security.JwtTokenService;
-import com.fitback.global.security.InvalidRefreshTokenException;
 
 @Service
 public class FitbackApplicationService {
 
     private final TenantDataRepository store;
     private final AiAnalysisPort ai;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtTokenService tokens;
 
-    public FitbackApplicationService(TenantDataRepository store, AiAnalysisPort ai, PasswordEncoder passwordEncoder,
-            JwtTokenService tokens) {
+    public FitbackApplicationService(TenantDataRepository store, AiAnalysisPort ai) {
         this.store = store;
         this.ai = ai;
-        this.passwordEncoder = passwordEncoder;
-        this.tokens = tokens;
-    }
-
-    public Map<String, Object> register(Map<String, Object> body) {
-        String email = required(body, "email");
-        if (!store.matching("users", "email", email).isEmpty()) {
-            throw new IllegalArgumentException("email already registered");
-        }
-        Map<String, Object> user = new LinkedHashMap<>(body);
-        user.put("password", passwordEncoder.encode(required(body, "password")));
-        user.putIfAbsent("role", "OWNER");
-        user.put("storeId", UUID.randomUUID().toString());
-        Map<String, Object> created = store.create("users", user);
-        return Map.of("userId", created.get("id"), "message", "registration completed");
-    }
-
-    public Map<String, Object> login(Map<String, Object> body) {
-        String email = required(body, "email");
-        Map<String, Object> user = store.matching("users", "email", email).stream().findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("invalid credentials"));
-        if (!passwordEncoder.matches(required(body, "password"), String.valueOf(user.get("password")))) {
-            throw new IllegalArgumentException("invalid credentials");
-        }
-        return tokens(email, String.valueOf(user.get("storeId")));
-    }
-
-    public Map<String, Object> refresh(String refreshToken) {
-        Map<String, Object> session = store.matching("refreshTokens", "token", refreshToken).stream().findFirst()
-                .orElseThrow(InvalidRefreshTokenException::new);
-        if (Instant.parse(String.valueOf(session.get("expiredAt"))).isBefore(Instant.now())) {
-            store.removeMatching("refreshTokens", "token", refreshToken);
-            throw new InvalidRefreshTokenException();
-        }
-        store.removeMatching("refreshTokens", "token", refreshToken);
-        return tokens(String.valueOf(session.get("subject")), String.valueOf(session.get("storeId")));
-    }
-
-    public void logout(String refreshToken) {
-        if (refreshToken != null) {
-            store.removeMatching("refreshTokens", "token", refreshToken);
-        }
-    }
-
-    public Map<String, Object> requestPasswordReset(String email) {
-        store.matching("users", "email", email).stream().findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("unknown email"));
-        String token = "reset-" + UUID.randomUUID();
-        store.create("passwordResetTokens", Map.of("token", token, "email", email,
-                "expiredAt", Instant.now().plusSeconds(900).toString()));
-        return Map.of("message", "password reset requested", "token", token);
-    }
-
-    public Map<String, Object> confirmPasswordReset(String token, String newPassword) {
-        Map<String, Object> reset = store.matching("passwordResetTokens", "token", token).stream().findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("invalid reset token"));
-        if (Instant.parse(String.valueOf(reset.get("expiredAt"))).isBefore(Instant.now())) {
-            throw new IllegalArgumentException("expired reset token");
-        }
-        Map<String, Object> user = store.matching("users", "email", reset.get("email")).stream().findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("unknown email"));
-        store.update("users", String.valueOf(user.get("id")), Map.of("password", passwordEncoder.encode(newPassword)));
-        store.removeMatching("passwordResetTokens", "token", token);
-        return Map.of("message", "password reset completed");
-    }
-
-    private Map<String, Object> tokens(String subject, String storeId) {
-        String refreshToken = "refresh-" + UUID.randomUUID();
-        store.create("refreshTokens", Map.of("token", refreshToken, "subject", subject, "storeId", storeId,
-                "expiredAt", Instant.now().plusSeconds(2_592_000).toString()));
-        return Map.of("accessToken", tokens.issue(subject, storeId), "refreshToken", refreshToken,
-                "user", Map.of("email", subject, "storeId", storeId));
     }
 
     public Map<String, Object> singleton(String name) {

@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.fitback.core.infrastructure.InMemoryTenantDataRepository.EntityNotFoundException;
 import com.fitback.core.infrastructure.AiTextAdapter.AiProviderException;
-import com.fitback.global.security.InvalidRefreshTokenException;
 import com.fitback.global.security.WebhookSignatureException;
 
 @RestControllerAdvice
@@ -28,11 +27,6 @@ public class ApiExceptionHandler {
     @ExceptionHandler(AiProviderException.class)
     ResponseEntity<Map<String, Object>> badGateway(AiProviderException exception) {
         return error(HttpStatus.BAD_GATEWAY, exception.getMessage());
-    }
-
-    @ExceptionHandler(InvalidRefreshTokenException.class)
-    ResponseEntity<Map<String, Object>> unauthorized(InvalidRefreshTokenException exception) {
-        return error(HttpStatus.UNAUTHORIZED, exception.getMessage());
     }
 
     @ExceptionHandler(WebhookSignatureException.class)

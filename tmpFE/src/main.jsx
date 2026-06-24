@@ -38,7 +38,12 @@ async function api(path, options = {}, token = null) {
     }
     throw new Error(message || `요청에 실패했습니다. (${response.status})`);
   }
-  return response.status === 204 ? null : response.json();
+  if (response.status === 204) return null;
+  const body = await response.json();
+  if (body && typeof body === "object" && "success" in body && "data" in body) {
+    return body.data;
+  }
+  return body;
 }
 
 function App() {
@@ -116,7 +121,10 @@ function App() {
       body: JSON.stringify({
         email: credentials.email,
         password: credentials.password,
-        name: credentials.name
+        passwordConfirm: credentials.passwordConfirm,
+        nickname: credentials.nickname,
+        agreeTerms: credentials.agreeTerms,
+        agreeMarketing: false
       })
     });
     await login(credentials);
@@ -258,7 +266,9 @@ function AuthScreen({ onLogin, onRegister }) {
   const [form, setForm] = useState({
     email: "",
     password: "",
-    name: ""
+    passwordConfirm: "",
+    nickname: "",
+    agreeTerms: false
   });
   const [message, setMessage] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -312,8 +322,8 @@ function AuthScreen({ onLogin, onRegister }) {
             </div>
             {mode === "register" && (
               <label>
-                이름
-                <input value={form.name} onChange={(event) => update("name", event.target.value)} autoComplete="name" required />
+                닉네임
+                <input value={form.nickname} onChange={(event) => update("nickname", event.target.value)} autoComplete="nickname" required />
               </label>
             )}
             <label>
@@ -324,6 +334,18 @@ function AuthScreen({ onLogin, onRegister }) {
               비밀번호
               <input type="password" value={form.password} onChange={(event) => update("password", event.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} required />
             </label>
+            {mode === "register" && (
+              <label>
+                비밀번호 확인
+                <input type="password" value={form.passwordConfirm} onChange={(event) => update("passwordConfirm", event.target.value)} autoComplete="new-password" required />
+              </label>
+            )}
+            {mode === "register" && (
+              <label className="checkbox-field">
+                <input type="checkbox" checked={form.agreeTerms} onChange={(event) => update("agreeTerms", event.target.checked)} required />
+                이용약관에 동의합니다
+              </label>
+            )}
             {message && <div className="notice warning">{message}</div>}
             <div className="auth-actions">
               <button className="primary-button" type="submit" disabled={isBusy}>

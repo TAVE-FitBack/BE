@@ -21,13 +21,6 @@ public class FitbackApiController {
         this.callbacks = callbacks;
     }
 
-    @PostMapping("/auth/register") ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, Object> b) { return created(app.register(b)); }
-    @PostMapping("/auth/login") Map<String, Object> login(@RequestBody Map<String, Object> b) { return app.login(b); }
-    @PostMapping("/auth/refresh") Map<String, Object> refresh(@RequestBody Map<String, Object> b) { return app.refresh(String.valueOf(b.get("refreshToken"))); }
-    @PostMapping("/auth/logout") ResponseEntity<Void> logout(@RequestBody(required=false) Map<String, Object> b) { app.logout(b == null ? null : String.valueOf(b.get("refreshToken"))); return ResponseEntity.noContent().build(); }
-    @PostMapping("/auth/password-reset/request") Map<String, Object> resetRequest(@RequestBody Map<String, Object> b) { return app.requestPasswordReset(String.valueOf(b.get("email"))); }
-    @PostMapping("/auth/password-reset/confirm") Map<String, Object> resetConfirm(@RequestBody Map<String, Object> b) { return app.confirmPasswordReset(String.valueOf(b.get("token")), String.valueOf(b.get("newPassword"))); }
-
     @GetMapping("/store") Map<String, Object> store() { return app.singleton("store"); }
     @PostMapping("/store") ResponseEntity<Map<String, Object>> createStore(@RequestBody Map<String, Object> b) { return created(app.saveSingleton("store", b)); }
     @PutMapping("/store") Map<String, Object> updateStore(@RequestBody Map<String, Object> b) { return app.saveSingleton("store", b); }

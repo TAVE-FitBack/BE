@@ -15,7 +15,7 @@ import com.fitback.global.exception.BusinessException;
 import com.fitback.global.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -26,7 +26,6 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
-@ConditionalOnBean(UserRepository.class)
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AuthService {
@@ -36,6 +35,9 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final EmailService emailService;
     private final StringRedisTemplate redisTemplate;
+
+    @Value("${app.auth.email-verification-required:true}")
+    private boolean emailVerificationRequired;
 
     private static final String REFRESH_TOKEN_PREFIX = "RT:";
     private static final String EMAIL_VERIFY_PREFIX = "EV:";
@@ -69,20 +71,22 @@ public class AuthService {
                 .password(passwordEncoder.encode(request.getPassword()))
                 .agreeTerms(request.isAgreeTerms())
                 .agreeMarketing(request.isAgreeMarketing())
-                .emailVerified(false)
+                .emailVerified(!emailVerificationRequired)
                 .build();
         userRepository.save(user);
 
-        // 이메일 인증 토큰 Redis 저장 (TTL 24시간)
-        String verificationToken = UUID.randomUUID().toString();
-        redisTemplate.opsForValue().set(
-                EMAIL_VERIFY_PREFIX + verificationToken,
-                user.getEmail(),
-                EMAIL_VERIFY_EXPIRATION,
-                TimeUnit.SECONDS
-        );
+        if (emailVerificationRequired) {
+            // 이메일 인증 토큰 Redis 저장 (TTL 24시간)
+            String verificationToken = UUID.randomUUID().toString();
+            redisTemplate.opsForValue().set(
+                    EMAIL_VERIFY_PREFIX + verificationToken,
+                    user.getEmail(),
+                    EMAIL_VERIFY_EXPIRATION,
+                    TimeUnit.SECONDS
+            );
 
-        emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+            emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+        }
 
         log.info("회원가입 완료 — email: {}, userId: {}", user.getEmail(), user.getId());
 
