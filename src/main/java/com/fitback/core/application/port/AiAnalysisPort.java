@@ -5,5 +5,5 @@ import java.util.Map;
 
 public interface AiAnalysisPort {
     Map<String, Object> analyze(String rawText);
-    List<Map<String, Object>> generateMessages(String customerName);
+    List<Map<String, Object>> generateMessages(Map<String, Object> context);
 }

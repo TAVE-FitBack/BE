@@ -51,9 +51,9 @@ app:
 
 ai:
   api-key: ${API_KEY_CODE:}
-  base-url: ${AI_BASE_URL:}
-  analyze-path: ${AI_ANALYZE_PATH:/ai/v1/consultations/analyze}
-  message-generate-path: ${AI_MESSAGE_GENERATE_PATH:/messages/generate}
+  base-url: ${AI_BASE_URL:https://api.groq.com/openai/v1}
+  chat-path: ${AI_CHAT_PATH:/chat/completions}
+  model: ${AI_MODEL:llama-3.3-70b-versatile}
   fallback-enabled: ${AI_FALLBACK_ENABLED:true}
   max-attempts: ${AI_MAX_ATTEMPTS:2}
   timeout-seconds: ${AI_TIMEOUT_SECONDS:10}

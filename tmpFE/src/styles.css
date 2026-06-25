@@ -743,6 +743,19 @@ button:disabled {
   margin-top: 4px;
 }
 
+.message-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.message-item span {
+  flex: none;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
 .message-item .action-row {
   margin-top: 10px;
   align-items: center;

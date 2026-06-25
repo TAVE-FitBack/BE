@@ -299,8 +299,20 @@ public class FitbackApplicationService {
     public List<Map<String, Object>> generateMessages(String followUpId) {
         Map<String, Object> followUp = store.get("followUps", followUpId);
         String customerId = String.valueOf(followUp.get("customerId"));
-        String name = String.valueOf(store.get("customers", customerId).get("name"));
-        return ai.generateMessages(name).stream().map(message -> {
+        Map<String, Object> customer = store.get("customers", customerId);
+
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("customerName", customer.get("name"));
+        context.put("leadTemperature", customer.get("leadTemperature"));
+        context.put("nextBestAction", customer.get("nextBestAction"));
+        context.put("primaryReason", customer.get("primaryReason"));
+        context.put("persuasionPoints", followUp.get("persuasionPoints"));
+        store.matching("customerInsights", "customerId", customerId).stream().findFirst()
+                .ifPresent(insight -> context.put("temperatureBasis", insight.get("temperatureBasis")));
+        store.matching("consultations", "customerId", customerId).stream().reduce((first, second) -> second)
+                .ifPresent(consultation -> context.put("consultationSummary", consultation.get("summary")));
+
+        return ai.generateMessages(context).stream().map(message -> {
             Map<String, Object> data = new LinkedHashMap<>(message);
             data.put("followUpId", followUpId);
             data.put("deliveryStatus", "DRAFT");
