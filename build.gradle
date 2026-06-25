@@ -46,13 +46,3 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
-
-tasks.register('bootRunCoreLocal', org.springframework.boot.gradle.tasks.run.BootRun) {
-	group = 'application'
-	description = 'Run the API v1 core workflow locally without requiring PostgreSQL.'
-	mainClass = 'com.fitback.CoreLocalApplication'
-	classpath = sourceSets.main.runtimeClasspath
-	systemProperty 'spring.profiles.active', 'core-local'
-	systemProperty 'fitback.jpa-auditing.enabled', 'false'
-	systemProperty 'ai.fallback-enabled', 'true'
-}

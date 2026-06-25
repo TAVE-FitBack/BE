@@ -24,7 +24,7 @@ public class FitbackApiController {
     @GetMapping("/store") Map<String, Object> store() { return app.singleton("store"); }
     @PostMapping("/store") ResponseEntity<Map<String, Object>> createStore(@RequestBody Map<String, Object> b) { return created(app.saveSingleton("store", b)); }
     @PutMapping("/store") Map<String, Object> updateStore(@RequestBody Map<String, Object> b) { return app.saveSingleton("store", b); }
-    @GetMapping("/store/services") List<Map<String, Object>> services() { return app.list("services"); }
+    @GetMapping("/store/services") List<Map<String, Object>> services() { return app.listServices(); }
     @PostMapping("/store/services") ResponseEntity<Map<String, Object>> createService(@RequestBody Map<String, Object> b) { return created(app.create("services", b)); }
     @PutMapping("/store/services/{id}") Map<String, Object> updateService(@PathVariable String id, @RequestBody Map<String, Object> b) { return app.update("services", id, b); }
     @GetMapping("/store/settings") Map<String, Object> settings() { return app.singleton("settings"); }

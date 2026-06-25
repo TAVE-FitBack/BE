@@ -17,12 +17,27 @@ import com.fitback.core.application.port.AiAnalysisPort;
 @Service
 public class FitbackApplicationService {
 
+    private static final List<String> DEFAULT_SERVICE_NAMES = List.of("PT 1:1", "그룹 PT", "필라테스", "상담만 진행");
+
     private final TenantDataRepository store;
     private final AiAnalysisPort ai;
 
     public FitbackApplicationService(TenantDataRepository store, AiAnalysisPort ai) {
         this.store = store;
         this.ai = ai;
+    }
+
+    @Transactional
+    public List<Map<String, Object>> listServices() {
+        List<Map<String, Object>> services = store.list("services");
+        if (!services.isEmpty()) {
+            return services;
+        }
+        List<Map<String, Object>> seeded = new ArrayList<>();
+        for (String name : DEFAULT_SERVICE_NAMES) {
+            seeded.add(store.create("services", Map.of("name", name, "isDefault", true)));
+        }
+        return seeded;
     }
 
     public Map<String, Object> singleton(String name) {

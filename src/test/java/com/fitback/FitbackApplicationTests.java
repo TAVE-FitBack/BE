@@ -3,12 +3,12 @@ package com.fitback;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest(classes = TestFitbackApplication.class, properties = {
-		"spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
-				+ "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
-		"fitback.jpa-auditing.enabled=false",
+@SpringBootTest(classes = FitbackApplication.class, properties = {
 		"jwt.secret=local-development-secret-key-change-me",
-		"ai.fallback-enabled=true"
+		"ai.fallback-enabled=true",
+		"app.auth.email-verification-required=false",
+		"spring.mail.username=test@example.com",
+		"spring.mail.password=test-password"
 })
 class FitbackApplicationTests {
 

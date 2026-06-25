@@ -4,6 +4,14 @@ import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 const AUTH_STORAGE_KEY = "fitback.session";
+const VIEW_TITLES = {
+  dashboard: "대시보드",
+  consultation: "신규 상담 등록",
+  customers: "고객 AI 인사이트",
+  followups: "후속관리 큐",
+  events: "이벤트 관리",
+  store: "매장 관리"
+};
 
 function readStoredSession() {
   try {
@@ -63,6 +71,12 @@ function App() {
   const [duplicate, setDuplicate] = useState(null);
   const [status, setStatus] = useState("로그인 후 실제 데이터를 불러옵니다.");
   const [isBusy, setIsBusy] = useState(false);
+  const [followUps, setFollowUps] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
+  const [priorityCustomers, setPriorityCustomers] = useState([]);
+  const [storeProfile, setStoreProfile] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [messageModal, setMessageModal] = useState(null);
 
   const token = session?.accessToken || null;
   const selectedCustomer = useMemo(
@@ -78,6 +92,30 @@ function App() {
     setStatus(content.length ? "고객 목록을 불러왔습니다." : "등록된 고객이 없습니다.");
   };
 
+  const loadFollowUps = async () => {
+    const result = await api("/follow-ups", {}, token);
+    setFollowUps(result || []);
+  };
+
+  const loadDashboard = async () => {
+    const [summary, priority] = await Promise.all([
+      api("/dashboard/summary", {}, token),
+      api("/dashboard/priority-customers", {}, token)
+    ]);
+    setDashboard(summary);
+    setPriorityCustomers(priority || []);
+  };
+
+  const loadStoreProfile = async () => {
+    const result = await api("/store", {}, token);
+    setStoreProfile(result && Object.keys(result).length ? result : null);
+  };
+
+  const loadEvents = async () => {
+    const result = await api("/store/events", {}, token);
+    setEvents(result || []);
+  };
+
   useEffect(() => {
     if (!token) return;
     loadCustomers()
@@ -85,6 +123,10 @@ function App() {
     api("/store/services", {}, token)
       .then((result) => setServices(result || []))
       .catch(() => setServices([]));
+    loadFollowUps().catch(() => setFollowUps([]));
+    loadDashboard().catch(() => { setDashboard(null); setPriorityCustomers([]); });
+    loadStoreProfile().catch(() => setStoreProfile(null));
+    loadEvents().catch(() => setEvents([]));
   }, [token]);
 
   const authenticate = (nextSession) => {
@@ -101,6 +143,12 @@ function App() {
     setServices([]);
     setSelectedId(null);
     setAnalysis(null);
+    setFollowUps([]);
+    setDashboard(null);
+    setPriorityCustomers([]);
+    setStoreProfile(null);
+    setEvents([]);
+    setMessageModal(null);
   };
 
   const login = async (credentials) => {
@@ -187,11 +235,71 @@ function App() {
       }
       setActiveView("customers");
       setStatus("상담 기록과 AI 인사이트를 저장했습니다.");
+      loadFollowUps().catch(() => {});
+      loadDashboard().catch(() => {});
     } catch {
       setStatus("상담 저장 요청에 실패했습니다.");
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const saveStoreProfile = async (data) => {
+    const result = await api("/store", {
+      method: storeProfile ? "PUT" : "POST",
+      body: JSON.stringify(data)
+    }, token);
+    setStoreProfile(result);
+    setStatus("매장 정보를 저장했습니다.");
+  };
+
+  const createService = async (name) => {
+    const result = await api("/store/services", {
+      method: "POST",
+      body: JSON.stringify({ name })
+    }, token);
+    setServices((prev) => [...prev, result]);
+    setStatus("서비스를 추가했습니다.");
+  };
+
+  const createEvent = async (data) => {
+    const result = await api("/store/events", {
+      method: "POST",
+      body: JSON.stringify(data)
+    }, token);
+    setEvents((prev) => [result, ...prev]);
+    setStatus("이벤트를 생성했습니다.");
+  };
+
+  const openMessageModal = async (followUp) => {
+    const customer = customers.find((item) => item.id === followUp.customerId);
+    setMessageModal({ followUpId: followUp.id, customerName: customer?.name || "고객", messages: [], isBusy: true });
+    try {
+      const generated = await api(`/follow-ups/${followUp.id}/messages/generate`, { method: "POST" }, token);
+      setMessageModal((prev) => prev && { ...prev, messages: generated || [], isBusy: false });
+    } catch {
+      setMessageModal((prev) => prev && { ...prev, isBusy: false });
+      setStatus("메시지 초안 생성에 실패했습니다.");
+    }
+  };
+
+  const closeMessageModal = () => setMessageModal(null);
+
+  const copyMessage = async (messageId) => {
+    const updated = await api(`/messages/${messageId}/copy`, { method: "PATCH" }, token);
+    setMessageModal((prev) => prev && {
+      ...prev,
+      messages: prev.messages.map((message) => (message.id === messageId ? updated : message))
+    });
+  };
+
+  const sendMessage = async (messageId) => {
+    const updated = await api(`/messages/${messageId}/send`, { method: "POST" }, token);
+    setMessageModal((prev) => prev && {
+      ...prev,
+      messages: prev.messages.map((message) => (message.id === messageId ? updated : message))
+    });
+    setStatus("메시지 발송을 요청했습니다.");
   };
 
   if (!session) {
@@ -214,9 +322,12 @@ function App() {
           </div>
         </div>
         <nav className="nav-stack" aria-label="주요 화면">
+          <button className={activeView === "dashboard" ? "active" : ""} onClick={() => setActiveView("dashboard")}>대시보드</button>
           <button className={activeView === "consultation" ? "active" : ""} onClick={() => setActiveView("consultation")}>상담 등록</button>
           <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}>고객 인사이트</button>
           <button className={activeView === "followups" ? "active" : ""} onClick={() => setActiveView("followups")}>후속관리</button>
+          <button className={activeView === "events" ? "active" : ""} onClick={() => setActiveView("events")}>이벤트</button>
+          <button className={activeView === "store" ? "active" : ""} onClick={() => setActiveView("store")}>매장 관리</button>
         </nav>
         <div className="status-card">
           <span className="dot" />
@@ -229,7 +340,7 @@ function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">Consultation Intelligence</p>
-            <h1>{activeView === "consultation" ? "신규 상담 등록" : activeView === "customers" ? "고객 AI 인사이트" : "후속관리 큐"}</h1>
+            <h1>{VIEW_TITLES[activeView] || "Fitback"}</h1>
           </div>
           <div className="topbar-metrics">
             <Metric label="HOT" value={customers.filter((item) => item.leadTemperature === "HOT").length} />
@@ -238,6 +349,9 @@ function App() {
           </div>
         </header>
 
+        {activeView === "dashboard" && (
+          <DashboardView dashboard={dashboard} priorityCustomers={priorityCustomers} />
+        )}
         {activeView === "consultation" && (
           <ConsultationView
             form={form}
@@ -255,8 +369,24 @@ function App() {
         {activeView === "customers" && (
           <CustomerView customers={customers} selectedCustomer={selectedCustomer} setSelectedId={setSelectedId} />
         )}
-        {activeView === "followups" && <FollowupView customers={customers} />}
+        {activeView === "followups" && (
+          <FollowupView customers={customers} followUps={followUps} onGenerateMessages={openMessageModal} />
+        )}
+        {activeView === "events" && (
+          <EventsView events={events} services={services} onCreateEvent={createEvent} />
+        )}
+        {activeView === "store" && (
+          <StoreView storeProfile={storeProfile} services={services} onSaveProfile={saveStoreProfile} onCreateService={createService} />
+        )}
       </section>
+      {messageModal && (
+        <MessageModal
+          modal={messageModal}
+          onClose={closeMessageModal}
+          onCopy={copyMessage}
+          onSend={sendMessage}
+        />
+      )}
     </main>
   );
 }
@@ -524,10 +654,11 @@ function CustomerView({ customers, selectedCustomer, setSelectedId }) {
   );
 }
 
-function FollowupView({ customers }) {
-  const targets = customers
-    .filter((customer) => customer.nextBestAction)
-    .sort((left, right) => (right.priorityScore || 0) - (left.priorityScore || 0));
+function FollowupView({ customers, followUps, onGenerateMessages }) {
+  const targets = followUps
+    .filter((followUp) => followUp.status !== "DONE")
+    .map((followUp) => ({ followUp, customer: customers.find((item) => item.id === followUp.customerId) }))
+    .sort((left, right) => (right.customer?.priorityScore || 0) - (left.customer?.priorityScore || 0));
 
   return (
     <section className="panel followup-panel">
@@ -544,18 +675,258 @@ function FollowupView({ customers }) {
             <span>상담 저장 후 추천 행동이 생성되면 이곳에 표시됩니다.</span>
           </div>
         )}
-        {targets.map((customer) => (
-          <article key={customer.id} className="followup-item">
+        {targets.map(({ followUp, customer }) => (
+          <article key={followUp.id} className="followup-item">
             <div>
-              <strong>{customer.name}</strong>
-              <TemperatureBadge value={customer.leadTemperature} compact />
+              <strong>{customer?.name || "고객"}</strong>
+              <TemperatureBadge value={customer?.leadTemperature} compact />
             </div>
-            <p>{customer.nextBestAction}</p>
-            <button className="ghost-button">메시지 초안 생성</button>
+            <p>{customer?.nextBestAction || followUp.persuasionPoints || "추천 행동이 아직 없습니다."}</p>
+            <button className="ghost-button" onClick={() => onGenerateMessages(followUp)}>메시지 초안 생성</button>
           </article>
         ))}
       </div>
     </section>
+  );
+}
+
+function DashboardView({ dashboard, priorityCustomers }) {
+  return (
+    <div className="dashboard-grid">
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Overview</p>
+            <h2>오늘의 운영 현황</h2>
+          </div>
+        </div>
+        <div className="topbar-metrics dashboard-metrics">
+          <Metric label="오늘 상담" value={dashboard?.todayConsultCount ?? 0} />
+          <Metric label="등록 전환율" value={`${dashboard?.monthlyRegistrationRate ?? 0}%`} />
+          <Metric label="대기 후속관리" value={dashboard?.pendingFollowUpCount ?? 0} />
+          <Metric label="지연 후속관리" value={dashboard?.overdueFollowUpCount ?? 0} />
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Priority</p>
+            <h2>우선 관리 고객</h2>
+          </div>
+        </div>
+        {priorityCustomers.length === 0 ? (
+          <div className="empty-state">
+            <strong>우선 관리할 고객이 없습니다.</strong>
+            <span>상담이 등록되면 우선순위가 높은 고객이 이곳에 표시됩니다.</span>
+          </div>
+        ) : (
+          <div className="customer-list">
+            {priorityCustomers.map((customer) => (
+              <div key={customer.id} className="customer-row">
+                <span>
+                  <strong>{customer.name}</strong>
+                  <small>{customer.phoneNum}</small>
+                </span>
+                <span>{customer.priorityScore ?? 50}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function EventsView({ events, services, onCreateEvent }) {
+  const [form, setForm] = useState({ name: "", serviceId: "" });
+  const [isBusy, setIsBusy] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!form.name || !form.serviceId) return;
+    setIsBusy(true);
+    try {
+      await onCreateEvent(form);
+      setForm({ name: "", serviceId: "" });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <div className="consultation-grid">
+      <section className="panel form-panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">New</p>
+            <h2>이벤트 생성</h2>
+          </div>
+        </div>
+        <form onSubmit={submit}>
+          <label>
+            이벤트명
+            <input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} required />
+          </label>
+          <label>
+            대상 서비스
+            <select value={form.serviceId} onChange={(event) => setForm((prev) => ({ ...prev, serviceId: event.target.value }))} required>
+              <option value="">서비스 선택</option>
+              {services.map((service) => (
+                <option key={service.id} value={service.id}>{service.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="action-row">
+            <button className="primary-button" type="submit" disabled={isBusy}>이벤트 생성</button>
+          </div>
+        </form>
+      </section>
+      <section className="panel ai-panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">History</p>
+            <h2>생성된 이벤트</h2>
+          </div>
+        </div>
+        {events.length === 0 ? (
+          <div className="empty-state">
+            <strong>생성된 이벤트가 없습니다.</strong>
+            <span>왼쪽에서 첫 이벤트를 만들어보세요.</span>
+          </div>
+        ) : (
+          <div className="signal-list">
+            {events.map((event) => (
+              <div className="signal-item" key={event.id}>
+                <strong>{event.name}</strong>
+                <span>대상 {event.targetCount ?? 0}명</span>
+                <small>{event.createdAt ? new Date(event.createdAt).toLocaleDateString() : ""}</small>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function StoreView({ storeProfile, services, onSaveProfile, onCreateService }) {
+  const [profileForm, setProfileForm] = useState({ name: storeProfile?.name || "", storeType: storeProfile?.storeType || "GYM" });
+  const [serviceName, setServiceName] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+
+  useEffect(() => {
+    setProfileForm({ name: storeProfile?.name || "", storeType: storeProfile?.storeType || "GYM" });
+  }, [storeProfile]);
+
+  const submitProfile = async (event) => {
+    event.preventDefault();
+    setIsBusy(true);
+    try {
+      await onSaveProfile(profileForm);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const submitService = async (event) => {
+    event.preventDefault();
+    if (!serviceName.trim()) return;
+    setIsBusy(true);
+    try {
+      await onCreateService(serviceName.trim());
+      setServiceName("");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <div className="consultation-grid">
+      <section className="panel form-panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Profile</p>
+            <h2>매장 정보</h2>
+          </div>
+        </div>
+        <form onSubmit={submitProfile}>
+          <label>
+            매장명
+            <input value={profileForm.name} onChange={(event) => setProfileForm((prev) => ({ ...prev, name: event.target.value }))} required />
+          </label>
+          <label>
+            매장 유형
+            <select value={profileForm.storeType} onChange={(event) => setProfileForm((prev) => ({ ...prev, storeType: event.target.value }))}>
+              <option value="GYM">GYM</option>
+              <option value="OTHER">OTHER</option>
+            </select>
+          </label>
+          <div className="action-row">
+            <button className="primary-button" type="submit" disabled={isBusy}>저장</button>
+          </div>
+        </form>
+      </section>
+      <section className="panel ai-panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Services</p>
+            <h2>제공 서비스</h2>
+          </div>
+        </div>
+        <div className="chip-section">
+          <div className="chips">
+            {services.length === 0 && <span className="inline-empty">등록된 서비스가 없습니다.</span>}
+            {services.map((service) => <span key={service.id || service.name}>{service.name}</span>)}
+          </div>
+        </div>
+        <form onSubmit={submitService} className="field-row">
+          <label>
+            새 서비스명
+            <input value={serviceName} onChange={(event) => setServiceName(event.target.value)} />
+          </label>
+          <button className="secondary-button" type="submit" disabled={isBusy} style={{ marginTop: 28 }}>추가</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function MessageModal({ modal, onClose, onCopy, onSend }) {
+  return (
+    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Message Drafts</p>
+            <h2>{modal.customerName}님께 보낼 메시지</h2>
+          </div>
+          <button className="ghost-button" onClick={onClose}>닫기</button>
+        </div>
+        {modal.isBusy ? (
+          <div className="empty-state">
+            <strong>메시지 초안을 생성하는 중입니다...</strong>
+          </div>
+        ) : modal.messages.length === 0 ? (
+          <div className="empty-state">
+            <strong>생성된 메시지 초안이 없습니다.</strong>
+          </div>
+        ) : (
+          <div className="signal-list">
+            {modal.messages.map((message) => (
+              <div className="signal-item message-item" key={message.id}>
+                <strong>{message.versionType} · {message.tonePreset}</strong>
+                <span>{message.content}</span>
+                <div className="action-row">
+                  <button className="ghost-button" onClick={() => onCopy(message.id)}>복사 표시</button>
+                  <button className="secondary-button" onClick={() => onSend(message.id)}>발송</button>
+                  <small>{message.deliveryStatus}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

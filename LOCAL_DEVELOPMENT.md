@@ -12,9 +12,13 @@ DB_PASSWORD=postgres
 REDIS_PORT=6379
 MAIL_USERNAME=local@example.com
 MAIL_PASSWORD=<local-mail-password>
+AUTH_EMAIL_VERIFICATION_REQUIRED=false
 ```
 
 Do not commit `.env`.
+
+`AUTH_EMAIL_VERIFICATION_REQUIRED=false` lets signup -> login work immediately in local dev without a working
+SMTP account; leave it unset (defaults to `true`) for anything resembling production.
 
 ## Run With PostgreSQL
 
@@ -24,16 +28,8 @@ Do not commit `.env`.
 
 This loads `.env`, starts PostgreSQL and Redis through Docker Compose, then runs Spring Boot.
 If PostgreSQL is already listening on port `5432`, the script reuses it and only starts Redis through Docker Compose.
-
-## Run Core API Only
-
-If Docker image downloads are blocked, the React `/api/v1` workflow can still be tested without JPA/PostgreSQL:
-
-```powershell
-.\scripts\start-local.ps1 -CoreOnly
-```
-
-This starts `CoreLocalApplication`, which exposes the same `/api/v1` auth, customer, consultation, and dashboard routes used by the React frontend.
+Postgres and Redis are both required -- authentication is backed by the real JPA `User` entity and a
+Redis-stored refresh-token/blacklist, so there is no DB-free auth mode.
 
 ## Frontend
 

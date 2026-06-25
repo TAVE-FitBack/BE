@@ -1,7 +1,3 @@
-param(
-    [switch]$CoreOnly
-)
-
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -26,11 +22,6 @@ Import-DotEnv (Join-Path $root ".env")
 
 if (-not $env:JWT_SECRET) {
     throw "JWT_SECRET is required. Add it to .env or set it in the current shell."
-}
-
-if ($CoreOnly) {
-    & .\gradlew.bat bootRunCoreLocal
-    exit $LASTEXITCODE
 }
 
 if (Get-NetTCPConnection -LocalPort 5432 -State Listen -ErrorAction SilentlyContinue) {

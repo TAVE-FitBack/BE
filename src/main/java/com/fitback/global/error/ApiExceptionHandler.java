@@ -8,7 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import com.fitback.core.infrastructure.InMemoryTenantDataRepository.EntityNotFoundException;
+import com.fitback.core.application.port.EntityNotFoundException;
 import com.fitback.core.infrastructure.AiTextAdapter.AiProviderException;
 import com.fitback.global.security.WebhookSignatureException;
 

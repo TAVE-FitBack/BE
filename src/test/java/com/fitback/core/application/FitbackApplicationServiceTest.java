@@ -2,28 +2,65 @@ package com.fitback.core.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import com.fitback.core.infrastructure.AiTextAdapter;
-import com.fitback.core.infrastructure.InMemoryTenantDataRepository;
-import com.fitback.global.security.JwtTokenService;
+import com.fitback.core.infrastructure.JpaTenantDataRepository;
+import com.fitback.core.infrastructure.persistence.TenantRecord;
+import com.fitback.core.infrastructure.persistence.TenantRecordRepository;
 
 class FitbackApplicationServiceTest {
 
     private FitbackApplicationService service;
-    private InMemoryTenantDataRepository repository;
+    private JpaTenantDataRepository repository;
 
     @BeforeEach
     void setUp() {
-        repository = new InMemoryTenantDataRepository();
-        service = new FitbackApplicationService(repository, new AiTextAdapter("", "", true), new BCryptPasswordEncoder(),
-                new JwtTokenService("local-development-secret-key-change-me", 86_400_000));
+        repository = new JpaTenantDataRepository(fakeTenantRecordRepository());
+        service = new FitbackApplicationService(repository, new AiTextAdapter("", "", true));
+    }
+
+    /** In-memory stand-in for the JPA repository so this test stays a fast, DB-free unit test. */
+    private TenantRecordRepository fakeTenantRecordRepository() {
+        Map<UUID, TenantRecord> store = new ConcurrentHashMap<>();
+        TenantRecordRepository repo = mock(TenantRecordRepository.class);
+        when(repo.save(any())).thenAnswer(invocation -> {
+            TenantRecord record = invocation.getArgument(0);
+            store.put(record.getId(), record);
+            return record;
+        });
+        when(repo.findById(any())).thenAnswer(invocation -> Optional.ofNullable(store.get(invocation.getArgument(0))));
+        when(repo.findByTenantIdAndCollection(any(), any())).thenAnswer(invocation -> store.values().stream()
+                .filter(record -> record.getTenantId().equals(invocation.getArgument(0))
+                        && record.getCollection().equals(invocation.getArgument(1)))
+                .toList());
+        when(repo.findByCollection(any())).thenAnswer(invocation -> store.values().stream()
+                .filter(record -> record.getCollection().equals(invocation.getArgument(0)))
+                .toList());
+        when(repo.findByIdAndTenantIdAndCollection(any(), any(), any())).thenAnswer(invocation -> {
+            TenantRecord record = store.get((UUID) invocation.getArgument(0));
+            boolean matches = record != null && record.getTenantId().equals(invocation.getArgument(1))
+                    && record.getCollection().equals(invocation.getArgument(2));
+            return matches ? Optional.of(record) : Optional.empty();
+        });
+        doAnswer(invocation -> {
+            List<TenantRecord> toDelete = invocation.getArgument(0);
+            toDelete.forEach(record -> store.remove(record.getId()));
+            return null;
+        }).when(repo).deleteAll(any());
+        return repo;
     }
 
     @Test

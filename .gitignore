@@ -62,5 +62,7 @@ logs/
 api_spec (1).html
 
 .omx/
+.omc/
 tmpFE/node_modules/
 tmpFE/dist/
+tmpFE/.omc/
