@@ -61,3 +61,4 @@ logs/
 
 # Local AI agent instructions
 AGENTS.local.md
+docs/
