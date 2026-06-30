@@ -11,6 +11,7 @@ import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -71,5 +72,5 @@ public class CustomerActivityTimeline {
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 }
