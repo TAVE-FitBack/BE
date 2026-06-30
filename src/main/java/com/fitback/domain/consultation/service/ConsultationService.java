@@ -67,7 +67,7 @@ public class ConsultationService {
                 .toList();
 
         List<ConsultationNewResponse.CounselorInfo> counselors = userRepository
-                .findAllByStoreId(storeId)
+                .findAllByStore_Id(storeId)
                 .stream()
                 .map(user -> ConsultationNewResponse.CounselorInfo.builder()
                         .userId(user.getId())
@@ -114,7 +114,7 @@ public class ConsultationService {
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
         User counselor = userRepository
-                .findByIdAndStoreId(request.getConsultation().getUserId(), storeId)
+                .findByIdAndStore_Id(request.getConsultation().getUserId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.COUNSELOR_NOT_FOUND));
 
         validateDuplicatePhone(storeId, request);
