@@ -62,7 +62,7 @@ public class ConsultationController {
     }
 
     @PostMapping
-    @Operation(summary = "상담 등록", description = "상담 등록 요청의 기본 검증과 고객 신규 생성 또는 기존 고객 수정을 처리합니다.")
+    @Operation(summary = "상담 등록", description = "고객 정보, 등록/미등록 상태, 관심 서비스, 상담 기록, 고객 활동 타임라인을 하나의 트랜잭션으로 저장합니다.")
     public ResponseEntity<ApiResponse<ConsultationCreateResponse>> createConsultation(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
             @Valid @RequestBody ConsultationCreateRequest request

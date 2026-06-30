@@ -33,6 +33,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -288,7 +289,7 @@ public class ConsultationService {
                 .relatedType(ActivityRelatedType.CONSULTATION)
                 .relatedId(consultation.getId())
                 .afterValue(afterValue)
-                .occurredAt(consultation.getConsultedAt())
+                .occurredAt(OffsetDateTime.now())
                 .build();
 
         customerActivityTimelineRepository.save(timeline);
