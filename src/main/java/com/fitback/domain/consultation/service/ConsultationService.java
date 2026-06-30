@@ -9,9 +9,11 @@ import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchRe
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.InterestService;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.InflowPath;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.user.entity.User;
@@ -35,6 +37,7 @@ public class ConsultationService {
     private final ServiceRepository serviceRepository;
     private final UserRepository userRepository;
     private final CustomerRepository customerRepository;
+    private final InterestServiceRepository interestServiceRepository;
     private final AiConsultationClient aiConsultationClient;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
@@ -94,7 +97,7 @@ public class ConsultationService {
             throw new BusinessException(ConsultationErrorCode.STORE_NOT_ASSIGNED);
         }
 
-        serviceRepository
+        Service service = serviceRepository
                 .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
@@ -102,7 +105,10 @@ public class ConsultationService {
                 .findByIdAndStoreId(request.getConsultation().getUserId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.COUNSELOR_NOT_FOUND));
 
-        Customer customer = saveCustomerForConsultation(storeId, counselor, request);
+        validateDuplicatePhone(storeId, request);
+
+        Customer customer = saveCustomerForConsultation(storeId, counselor, service, request);
+        applyRegistrationStatus(customer, service, request.getConsultation().getIsRegistered());
 
         return ConsultationCreateResponse.builder()
                 .customerId(customer.getId())
@@ -148,6 +154,7 @@ public class ConsultationService {
     private Customer saveCustomerForConsultation(
             UUID storeId,
             User counselor,
+            Service service,
             ConsultationCreateRequest request
     ) {
         LocalDate consultedDate = request.getConsultation().getConsultedAt().toLocalDate();
@@ -161,7 +168,8 @@ public class ConsultationService {
                     .phoneNum(request.getCustomer().getPhoneNum())
                     .preferredContactChannel(request.getCustomer().getPreferredContactChannel())
                     .inflowPath(resolveInflowPath(request.getCustomer().getInflowPath()))
-                    .status(CustomerStatus.UNREGISTERED)
+                    .status(resolveInitialStatus(request.getConsultation().getIsRegistered()))
+                    .registeredService(request.getConsultation().getIsRegistered() ? service : null)
                     .firstConsultAt(consultedDate)
                     .latestConsultAt(consultedDate)
                     .build();
@@ -184,6 +192,39 @@ public class ConsultationService {
         );
 
         return customer;
+    }
+
+    private void applyRegistrationStatus(Customer customer, Service service, boolean registered) {
+        if (registered) {
+            customer.markRegistered(service);
+            return;
+        }
+
+        customer.markUnregistered();
+        interestServiceRepository.findByCustomerIdAndServiceId(customer.getId(), service.getId())
+                .orElseGet(() -> interestServiceRepository.save(InterestService.builder()
+                        .customer(customer)
+                        .service(service)
+                        .build()));
+    }
+
+    private void validateDuplicatePhone(UUID storeId, ConsultationCreateRequest request) {
+        String phoneNum = request.getCustomer().getPhoneNum();
+
+        if (request.getCustomerId() == null) {
+            if (customerRepository.findByPhoneNumAndStoreId(phoneNum, storeId).isPresent()) {
+                throw new BusinessException(ConsultationErrorCode.DUPLICATE_CUSTOMER_PHONE);
+            }
+            return;
+        }
+
+        if (customerRepository.existsByPhoneNumAndStoreIdAndIdNot(phoneNum, storeId, request.getCustomerId())) {
+            throw new BusinessException(ConsultationErrorCode.DUPLICATE_CUSTOMER_PHONE);
+        }
+    }
+
+    private CustomerStatus resolveInitialStatus(boolean registered) {
+        return registered ? CustomerStatus.REGISTERED : CustomerStatus.UNREGISTERED;
     }
 
     private InflowPath resolveInflowPath(InflowPath inflowPath) {
