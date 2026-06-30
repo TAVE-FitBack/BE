@@ -1,19 +1,24 @@
 package com.fitback.domain.consultation.controller;
 
+import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.service.ConsultationService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -40,6 +45,16 @@ public class ConsultationController {
             @RequestParam String phone
     ) {
         ConsultationCustomerSearchResponse response = consultationService.searchCustomerByPhone(storeId, phone);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PostMapping("/check-preview")
+    @Operation(summary = "상담 내용 AI 중간 점검", description = "상담 원문과 고객 기본 정보를 AI 서버에 전달해 작성 가이드라인 충족 여부를 점검합니다.")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> checkPreview(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Valid @RequestBody ConsultationCheckPreviewRequest request
+    ) {
+        Map<String, Object> response = consultationService.checkPreview(storeId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }

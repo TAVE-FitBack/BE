@@ -1,10 +1,14 @@
 package com.fitback.domain.consultation.service;
 
+import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
@@ -14,6 +18,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @org.springframework.stereotype.Service
@@ -24,6 +29,7 @@ public class ConsultationService {
     private final ServiceRepository serviceRepository;
     private final UserRepository userRepository;
     private final CustomerRepository customerRepository;
+    private final AiConsultationClient aiConsultationClient;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
         if (storeId == null) {
@@ -52,6 +58,28 @@ public class ConsultationService {
                 .services(services)
                 .counselors(counselors)
                 .build();
+    }
+
+    public Map<String, Object> checkPreview(UUID storeId, ConsultationCheckPreviewRequest request) {
+        if (storeId == null) {
+            throw new BusinessException(ConsultationErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Service service = serviceRepository
+                .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
+
+        AiCheckPreviewRequest aiRequest = AiCheckPreviewRequest.builder()
+                .rawText(request.getConsultation().getRawText())
+                .serviceName(service.getName())
+                .customerInfo(AiCheckPreviewRequest.CustomerInfo.builder()
+                        .name(request.getCustomer().getName())
+                        .gender(request.getCustomer().getGender())
+                        .birthDate(request.getCustomer().getBirthDate())
+                        .build())
+                .build();
+
+        return aiConsultationClient.checkPreview(aiRequest);
     }
 
     public ConsultationCustomerSearchResponse searchCustomerByPhone(UUID storeId, String phone) {
