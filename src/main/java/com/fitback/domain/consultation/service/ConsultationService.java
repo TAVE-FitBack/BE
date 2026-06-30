@@ -3,13 +3,18 @@ package com.fitback.domain.consultation.service;
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.ConsultationCreateRequest;
+import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.enums.InflowPath;
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
+import com.fitback.domain.user.entity.User;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import com.fitback.global.exception.ErrorCode;
@@ -17,6 +22,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -82,6 +88,27 @@ public class ConsultationService {
         return aiConsultationClient.checkPreview(aiRequest);
     }
 
+    @Transactional
+    public ConsultationCreateResponse createConsultation(UUID storeId, ConsultationCreateRequest request) {
+        if (storeId == null) {
+            throw new BusinessException(ConsultationErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        serviceRepository
+                .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
+
+        User counselor = userRepository
+                .findByIdAndStoreId(request.getConsultation().getUserId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.COUNSELOR_NOT_FOUND));
+
+        Customer customer = saveCustomerForConsultation(storeId, counselor, request);
+
+        return ConsultationCreateResponse.builder()
+                .customerId(customer.getId())
+                .build();
+    }
+
     public ConsultationCustomerSearchResponse searchCustomerByPhone(UUID storeId, String phone) {
         if (storeId == null) {
             throw new BusinessException(ConsultationErrorCode.STORE_NOT_ASSIGNED);
@@ -116,5 +143,50 @@ public class ConsultationService {
                         .latestConsultAt(customer.getLatestConsultAt())
                         .build())
                 .build();
+    }
+
+    private Customer saveCustomerForConsultation(
+            UUID storeId,
+            User counselor,
+            ConsultationCreateRequest request
+    ) {
+        LocalDate consultedDate = request.getConsultation().getConsultedAt().toLocalDate();
+
+        if (request.getCustomerId() == null) {
+            Customer customer = Customer.builder()
+                    .store(counselor.getStore())
+                    .name(request.getCustomer().getName())
+                    .gender(request.getCustomer().getGender())
+                    .birthDate(request.getCustomer().getBirthDate())
+                    .phoneNum(request.getCustomer().getPhoneNum())
+                    .preferredContactChannel(request.getCustomer().getPreferredContactChannel())
+                    .inflowPath(resolveInflowPath(request.getCustomer().getInflowPath()))
+                    .status(CustomerStatus.UNREGISTERED)
+                    .firstConsultAt(consultedDate)
+                    .latestConsultAt(consultedDate)
+                    .build();
+
+            return customerRepository.save(customer);
+        }
+
+        Customer customer = customerRepository
+                .findByIdAndStoreId(request.getCustomerId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CUSTOMER_NOT_FOUND));
+
+        customer.updateBasicInfo(
+                request.getCustomer().getName(),
+                request.getCustomer().getGender(),
+                request.getCustomer().getBirthDate(),
+                request.getCustomer().getPhoneNum(),
+                request.getCustomer().getPreferredContactChannel(),
+                resolveInflowPath(request.getCustomer().getInflowPath()),
+                consultedDate
+        );
+
+        return customer;
+    }
+
+    private InflowPath resolveInflowPath(InflowPath inflowPath) {
+        return inflowPath != null ? inflowPath : InflowPath.OTHER;
     }
 }
