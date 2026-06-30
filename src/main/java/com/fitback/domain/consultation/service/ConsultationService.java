@@ -7,11 +7,19 @@ import com.fitback.domain.consultation.dto.request.ConsultationCreateRequest;
 import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
+import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.enums.ConsultationSourceType;
+import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.InflowPath;
+import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.service.entity.Service;
@@ -25,6 +33,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,6 +47,8 @@ public class ConsultationService {
     private final UserRepository userRepository;
     private final CustomerRepository customerRepository;
     private final InterestServiceRepository interestServiceRepository;
+    private final ConsultationRepository consultationRepository;
+    private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final AiConsultationClient aiConsultationClient;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
@@ -109,9 +120,14 @@ public class ConsultationService {
 
         Customer customer = saveCustomerForConsultation(storeId, counselor, service, request);
         applyRegistrationStatus(customer, service, request.getConsultation().getIsRegistered());
+        Consultation consultation = saveConsultation(customer, counselor, service, request);
+        saveConsultationCreatedTimeline(customer, counselor, service, consultation);
 
         return ConsultationCreateResponse.builder()
+                .consultationId(consultation.getId())
                 .customerId(customer.getId())
+                .sessionNo(consultation.getSessionNo())
+                .redirectUrl(buildConsultationRedirectUrl(customer.getId(), consultation.getId()))
                 .build();
     }
 
@@ -225,6 +241,61 @@ public class ConsultationService {
 
     private CustomerStatus resolveInitialStatus(boolean registered) {
         return registered ? CustomerStatus.REGISTERED : CustomerStatus.UNREGISTERED;
+    }
+
+    private Consultation saveConsultation(
+            Customer customer,
+            User counselor,
+            Service service,
+            ConsultationCreateRequest request
+    ) {
+        int nextSessionNo = consultationRepository.findMaxSessionNoByCustomerId(customer.getId()) + 1;
+
+        Consultation consultation = Consultation.builder()
+                .customer(customer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(request.getConsultation().getConsultedAt())
+                .sessionNo(nextSessionNo)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText(request.getConsultation().getRawText())
+                .build();
+
+        return consultationRepository.save(consultation);
+    }
+
+    private void saveConsultationCreatedTimeline(
+            Customer customer,
+            User counselor,
+            Service service,
+            Consultation consultation
+    ) {
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("consultationId", consultation.getId());
+        afterValue.put("sessionNo", consultation.getSessionNo());
+        afterValue.put("stage", consultation.getStage());
+        afterValue.put("consultedServiceId", service.getId());
+        afterValue.put("customerStatus", customer.getStatus());
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(counselor.getStore())
+                .customer(customer)
+                .actorUser(counselor)
+                .activityType(CustomerActivityType.CONSULTATION_CREATED)
+                .title("상담 기록 등록")
+                .description("고객의 상담 기록이 등록되었습니다.")
+                .relatedType(ActivityRelatedType.CONSULTATION)
+                .relatedId(consultation.getId())
+                .afterValue(afterValue)
+                .occurredAt(consultation.getConsultedAt())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
+    }
+
+    private String buildConsultationRedirectUrl(UUID customerId, UUID consultationId) {
+        return "/customers/" + customerId + "/consultations/" + consultationId;
     }
 
     private InflowPath resolveInflowPath(InflowPath inflowPath) {
