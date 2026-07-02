@@ -4,14 +4,64 @@ import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 const AUTH_STORAGE_KEY = "fitback.session";
-const VIEW_TITLES = {
-  dashboard: "대시보드",
-  consultation: "신규 상담 등록",
-  customers: "고객 AI 인사이트",
-  followups: "후속관리 큐",
-  events: "이벤트 관리",
-  store: "매장 관리"
+
+const sampleAnalysis = {
+  leadTemperature: "WARM",
+  temperatureBasis: "운동 목적은 분명하지만 가격과 일정에 대한 확인이 더 필요합니다.",
+  summary:
+    "고객은 어깨 결림과 체력 저하를 해결하고 싶어합니다. 초보자 불안이 있어 부담 없는 시작 구성이 적합합니다.",
+  nextBestAction: "부담 없이 시작 가능한 체험 PT와 비혼잡 시간대를 먼저 안내하세요.",
+  persuasionPoints: ["초보자 맞춤 루틴", "통증 완화 중심", "유연한 스케줄"],
+  signals: [
+    { signalType: "INTEREST", signalValue: "MEDIUM", confidence: "MEDIUM" },
+    { signalType: "OBJECTION", signalValue: "PRICE", confidence: "MEDIUM" }
+  ]
 };
+
+const demoCustomers = [
+  {
+    id: "demo-1",
+    name: "김민지",
+    phoneNum: "***-****-1024",
+    leadTemperature: "WARM",
+    priorityScore: 74,
+    status: "UNREGISTERED",
+    nextBestAction: "체험 PT와 비혼잡 시간대 안내",
+    primaryReason: "PRICE_CONCERN",
+    aiInsight: sampleAnalysis,
+    signals: sampleAnalysis.signals,
+    consultations: [
+      {
+        id: "consult-1",
+        summary: sampleAnalysis.summary,
+        rawText:
+          "32세 여성 회원. 어깨 결림과 체력 증진이 목적이며, 요가 경험이 조금 있음."
+      }
+    ]
+  },
+  {
+    id: "demo-2",
+    name: "박준호",
+    phoneNum: "***-****-7788",
+    leadTemperature: "HOT",
+    priorityScore: 91,
+    status: "UNREGISTERED",
+    nextBestAction: "오늘 안에 등록 혜택과 첫 수업 가능 시간을 제안",
+    primaryReason: "NEEDS_CONFIRMATION",
+    aiInsight: {
+      ...sampleAnalysis,
+      leadTemperature: "HOT",
+      temperatureBasis: "즉시 시작 의사가 있고 방문 일정까지 확인했습니다."
+    },
+    signals: [{ signalType: "NEXT_ACTION", signalValue: "BOOKING", confidence: "HIGH" }],
+    consultations: []
+  }
+];
+
+const demoFollowUps = [
+  { id: "follow-1", customerId: "demo-1", status: "PENDING" },
+  { id: "follow-2", customerId: "demo-2", status: "PENDING" }
+];
 
 function readStoredSession() {
   try {
@@ -25,29 +75,29 @@ async function api(path, options = {}, token = null) {
   let response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
+      ...options,
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers || {})
-      },
-      ...options
+      }
     });
   } catch {
     throw new Error("백엔드 서버에 연결할 수 없습니다.");
   }
-  if (!response.ok) {
-    const rawMessage = await response.text();
-    let message = rawMessage;
+
+  const text = await response.text();
+  let body = null;
+  if (text) {
     try {
-      const parsed = JSON.parse(rawMessage);
-      message = parsed.message || parsed.error || parsed.code || rawMessage;
+      body = JSON.parse(text);
     } catch {
-      message = rawMessage;
+      body = { message: text };
     }
-    throw new Error(message || `요청에 실패했습니다. (${response.status})`);
   }
-  if (response.status === 204) return null;
-  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body?.message || body?.error || `요청 실패 (${response.status})`);
+  }
   if (body && typeof body === "object" && "success" in body && "data" in body) {
     return body.data;
   }
@@ -56,102 +106,68 @@ async function api(path, options = {}, token = null) {
 
 function App() {
   const [session, setSession] = useState(readStoredSession);
-  const [activeView, setActiveView] = useState("consultation");
-  const [customers, setCustomers] = useState([]);
-  const [services, setServices] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
-  const [form, setForm] = useState({
-    name: "",
-    phoneNum: "",
-    serviceIds: [],
-    inflowPath: "",
-    rawText: ""
-  });
-  const [analysis, setAnalysis] = useState(null);
-  const [duplicate, setDuplicate] = useState(null);
-  const [status, setStatus] = useState("로그인 후 실제 데이터를 불러옵니다.");
-  const [isBusy, setIsBusy] = useState(false);
-  const [followUps, setFollowUps] = useState([]);
-  const [dashboard, setDashboard] = useState(null);
-  const [priorityCustomers, setPriorityCustomers] = useState([]);
-  const [storeProfile, setStoreProfile] = useState(null);
-  const [events, setEvents] = useState([]);
+  const [view, setView] = useState("consultation");
+  const [status, setStatus] = useState("Figma 기반 화면 준비 완료");
+  const [customers, setCustomers] = useState(demoCustomers);
+  const [followUps, setFollowUps] = useState(demoFollowUps);
+  const [services, setServices] = useState([
+    { id: "pt", name: "PT 1:1" },
+    { id: "group", name: "그룹 PT" },
+    { id: "pilates", name: "필라테스" }
+  ]);
+  const [selectedId, setSelectedId] = useState("demo-1");
   const [messageModal, setMessageModal] = useState(null);
 
-  const token = session?.accessToken || null;
+  const token = session?.accessToken;
   const selectedCustomer = useMemo(
-    () => customers.find((customer) => customer.id === selectedId) || customers[0] || null,
+    () => customers.find((customer) => customer.id === selectedId) || customers[0],
     [customers, selectedId]
   );
 
-  const loadCustomers = async (preferredId = null) => {
-    const result = await api("/customers", {}, token);
-    const content = result.content || [];
-    setCustomers(content.map(normalizeCustomer));
-    setSelectedId(preferredId || content[0]?.id || null);
-    setStatus(content.length ? "고객 목록을 불러왔습니다." : "등록된 고객이 없습니다.");
-  };
-
-  const loadFollowUps = async () => {
-    const result = await api("/follow-ups", {}, token);
-    setFollowUps(result || []);
-  };
-
-  const loadDashboard = async () => {
-    const [summary, priority] = await Promise.all([
-      api("/dashboard/summary", {}, token),
-      api("/dashboard/priority-customers", {}, token)
-    ]);
-    setDashboard(summary);
-    setPriorityCustomers(priority || []);
-  };
-
-  const loadStoreProfile = async () => {
-    const result = await api("/store", {}, token);
-    setStoreProfile(result && Object.keys(result).length ? result : null);
-  };
-
-  const loadEvents = async () => {
-    const result = await api("/store/events", {}, token);
-    setEvents(result || []);
-  };
-
   useEffect(() => {
-    if (!token) return;
-    loadCustomers()
-      .catch(() => setStatus("고객 목록을 불러오지 못했습니다."));
-    api("/store/services", {}, token)
-      .then((result) => setServices(result || []))
-      .catch(() => setServices([]));
-    loadFollowUps().catch(() => setFollowUps([]));
-    loadDashboard().catch(() => { setDashboard(null); setPriorityCustomers([]); });
-    loadStoreProfile().catch(() => setStoreProfile(null));
-    loadEvents().catch(() => setEvents([]));
-  }, [token]);
+    if (!token || session?.demo) return;
+    refreshData(token).catch((error) => setStatus(error.message));
+  }, [token, session?.demo]);
 
-  const authenticate = (nextSession) => {
+  async function refreshData(activeToken = token) {
+    const [customerResult, serviceResult, followUpResult] = await Promise.allSettled([
+      api("/customers", {}, activeToken),
+      api("/store/services", {}, activeToken),
+      api("/follow-ups", {}, activeToken)
+    ]);
+
+    if (customerResult.status === "fulfilled") {
+      const content = customerResult.value?.content || [];
+      if (content.length) {
+        const normalized = content.map(normalizeCustomer);
+        setCustomers(normalized);
+        setSelectedId(normalized[0].id);
+      }
+    }
+    if (serviceResult.status === "fulfilled" && serviceResult.value?.length) {
+      setServices(serviceResult.value);
+    }
+    if (followUpResult.status === "fulfilled" && followUpResult.value?.length) {
+      setFollowUps(followUpResult.value);
+    }
+    setStatus("API 데이터 동기화 완료");
+  }
+
+  function authenticate(nextSession) {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession));
     setSession(nextSession);
-    setStatus("로그인되었습니다.");
-  };
+    setStatus("로그인 완료");
+  }
 
-  const logout = () => {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    setSession(null);
-    setActiveView("consultation");
-    setCustomers([]);
-    setServices([]);
-    setSelectedId(null);
-    setAnalysis(null);
-    setFollowUps([]);
-    setDashboard(null);
-    setPriorityCustomers([]);
-    setStoreProfile(null);
-    setEvents([]);
-    setMessageModal(null);
-  };
+  function useDemoSession() {
+    authenticate({
+      accessToken: "demo-token",
+      user: { email: "demo@fitback.ai", nickname: "관리자" },
+      demo: true
+    });
+  }
 
-  const login = async (credentials) => {
+  async function login(credentials) {
     const result = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify(credentials)
@@ -161,237 +177,133 @@ function App() {
       refreshToken: result.refreshToken,
       user: result.user || { email: credentials.email }
     });
-  };
+  }
 
-  const register = async (credentials) => {
+  async function register(credentials) {
     await api("/auth/register", {
       method: "POST",
       body: JSON.stringify({
         email: credentials.email,
         password: credentials.password,
         passwordConfirm: credentials.passwordConfirm,
-        nickname: credentials.nickname,
+        nickname: credentials.nickname || credentials.email.split("@")[0],
         agreeTerms: credentials.agreeTerms,
         agreeMarketing: false
       })
     });
-    await login(credentials);
-  };
+    setStatus("계정 생성 완료. 이메일 인증 후 로그인하세요.");
+  }
 
-  const updateForm = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  function logout() {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setSession(null);
+    setView("consultation");
+    setStatus("로그아웃 완료");
+  }
 
-  const toggleService = (service) => {
-    setForm((prev) => ({
-      ...prev,
-      serviceIds: prev.serviceIds.includes(service)
-        ? prev.serviceIds.filter((item) => item !== service)
-        : [...prev.serviceIds, service]
-    }));
-  };
-
-  const checkDuplicate = async () => {
-    setIsBusy(true);
-    try {
-      const result = await api(`/consultations/check-duplicate?phoneNum=${encodeURIComponent(form.phoneNum)}&name=${encodeURIComponent(form.name)}`, {}, token);
-      setDuplicate(result);
-      setStatus(result.isDuplicate ? "기존 고객이 확인되었습니다." : "신규 상담 등록이 가능합니다.");
-    } catch {
-      setDuplicate(null);
-      setStatus("중복 확인 요청에 실패했습니다.");
-    } finally {
-      setIsBusy(false);
+  async function analyzeConsultation(form) {
+    if (session?.demo) {
+      setStatus("데모 AI 분석 완료");
+      return sampleAnalysis;
     }
-  };
+    const result = await api(
+      "/consultations/analyze-preview",
+      { method: "POST", body: JSON.stringify(form) },
+      token
+    );
+    setStatus("AI 분석 완료");
+    return result;
+  }
 
-  const runPreview = async () => {
-    setIsBusy(true);
-    try {
-      const result = await api("/consultations/analyze-preview", {
-        method: "POST",
-        body: JSON.stringify({ ...form, rawText: form.rawText })
-      }, token);
-      setAnalysis(result);
-      setStatus("AI 미리보기가 완료되었습니다.");
-    } catch {
-      setStatus("AI 미리보기 요청에 실패했습니다.");
-    } finally {
-      setIsBusy(false);
+  async function saveConsultation(form, analysis) {
+    if (session?.demo) {
+      const id = `demo-${Date.now()}`;
+      const customer = normalizeCustomer({
+        id,
+        name: form.name || "신규 고객",
+        phoneNum: maskPhone(form.phoneNum),
+        leadTemperature: analysis.leadTemperature || analysis.temperature,
+        priorityScore: analysis.leadTemperature === "HOT" ? 90 : 72,
+        nextBestAction: analysis.nextBestAction,
+        primaryReason: analysis.reasons?.[0]?.reasonType || "NEEDS_CONFIRMATION",
+        aiInsight: analysis,
+        signals: analysis.signals,
+        consultations: [{ id: `${id}-c`, summary: analysis.summary, rawText: form.rawText }]
+      });
+      setCustomers((prev) => [customer, ...prev]);
+      setFollowUps((prev) => [{ id: `${id}-f`, customerId: id, status: "PENDING" }, ...prev]);
+      setSelectedId(id);
+      setView("customers");
+      setStatus("데모 상담 저장 완료");
+      return;
     }
-  };
 
-  const saveConsultation = async () => {
-    setIsBusy(true);
-    try {
-      const result = await api("/consultations", {
-        method: "POST",
-        body: JSON.stringify({ ...form, aiResult: analysis })
-      }, token);
-      if (result.customer) {
-        const saved = normalizeCustomer(result.customer);
-        setCustomers((prev) => [saved, ...prev]);
-        setSelectedId(saved.id);
-      } else {
-        await loadCustomers(result.customerId);
-      }
-      setActiveView("customers");
-      setStatus("상담 기록과 AI 인사이트를 저장했습니다.");
-      loadFollowUps().catch(() => {});
-      loadDashboard().catch(() => {});
-    } catch {
-      setStatus("상담 저장 요청에 실패했습니다.");
-    } finally {
-      setIsBusy(false);
+    const result = await api(
+      "/consultations",
+      { method: "POST", body: JSON.stringify({ ...form, aiResult: analysis }) },
+      token
+    );
+    if (result?.customer) {
+      const customer = normalizeCustomer(result.customer);
+      setCustomers((prev) => [customer, ...prev]);
+      setSelectedId(customer.id);
+    } else {
+      await refreshData();
     }
-  };
+    setView("customers");
+    setStatus("상담과 AI 분석 저장 완료");
+  }
 
-  const saveStoreProfile = async (data) => {
-    const result = await api("/store", {
-      method: storeProfile ? "PUT" : "POST",
-      body: JSON.stringify(data)
-    }, token);
-    setStoreProfile(result);
-    setStatus("매장 정보를 저장했습니다.");
-  };
-
-  const createService = async (name) => {
-    const result = await api("/store/services", {
-      method: "POST",
-      body: JSON.stringify({ name })
-    }, token);
-    setServices((prev) => [...prev, result]);
-    setStatus("서비스를 추가했습니다.");
-  };
-
-  const createEvent = async (data) => {
-    const result = await api("/store/events", {
-      method: "POST",
-      body: JSON.stringify(data)
-    }, token);
-    setEvents((prev) => [result, ...prev]);
-    setStatus("이벤트를 생성했습니다.");
-  };
-
-  const openMessageModal = async (followUp) => {
+  async function generateMessages(followUp) {
     const customer = customers.find((item) => item.id === followUp.customerId);
-    setMessageModal({ followUpId: followUp.id, customerName: customer?.name || "고객", messages: [], isBusy: true });
-    try {
-      const generated = await api(`/follow-ups/${followUp.id}/messages/generate`, { method: "POST" }, token);
-      setMessageModal((prev) => prev && { ...prev, messages: generated || [], isBusy: false });
-    } catch {
-      setMessageModal((prev) => prev && { ...prev, isBusy: false });
-      setStatus("메시지 초안 생성에 실패했습니다.");
+    setMessageModal({ customer, messages: [], isBusy: true });
+    if (session?.demo) {
+      setTimeout(() => {
+        setMessageModal({
+          customer,
+          isBusy: false,
+          messages: buildDemoMessages(customer)
+        });
+      }, 250);
+      return;
     }
-  };
-
-  const closeMessageModal = () => setMessageModal(null);
-
-  const copyMessage = async (messageId) => {
-    const updated = await api(`/messages/${messageId}/copy`, { method: "PATCH" }, token);
-    setMessageModal((prev) => prev && {
-      ...prev,
-      messages: prev.messages.map((message) => (message.id === messageId ? updated : message))
-    });
-  };
-
-  const sendMessage = async (messageId) => {
-    const updated = await api(`/messages/${messageId}/send`, { method: "POST" }, token);
-    setMessageModal((prev) => prev && {
-      ...prev,
-      messages: prev.messages.map((message) => (message.id === messageId ? updated : message))
-    });
-    setStatus("메시지 발송을 요청했습니다.");
-  };
+    try {
+      const messages = await api(`/follow-ups/${followUp.id}/messages/generate`, { method: "POST" }, token);
+      setMessageModal({ customer, messages, isBusy: false });
+      setStatus("AI 메시지 초안 생성 완료");
+    } catch (error) {
+      setMessageModal({ customer, messages: buildDemoMessages(customer), isBusy: false });
+      setStatus(`${error.message} 데모 메시지를 표시합니다.`);
+    }
+  }
 
   if (!session) {
-    return (
-      <AuthScreen
-        onLogin={login}
-        onRegister={register}
-      />
-    );
+    return <AuthScreen onLogin={login} onRegister={register} onDemo={useDemoSession} />;
   }
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">F</span>
-          <div>
-            <strong>Fitback</strong>
-            <small>AI 상담 관리</small>
-          </div>
-        </div>
-        <nav className="nav-stack" aria-label="주요 화면">
-          <button className={activeView === "dashboard" ? "active" : ""} onClick={() => setActiveView("dashboard")}>대시보드</button>
-          <button className={activeView === "consultation" ? "active" : ""} onClick={() => setActiveView("consultation")}>상담 등록</button>
-          <button className={activeView === "customers" ? "active" : ""} onClick={() => setActiveView("customers")}>고객 인사이트</button>
-          <button className={activeView === "followups" ? "active" : ""} onClick={() => setActiveView("followups")}>후속관리</button>
-          <button className={activeView === "events" ? "active" : ""} onClick={() => setActiveView("events")}>이벤트</button>
-          <button className={activeView === "store" ? "active" : ""} onClick={() => setActiveView("store")}>매장 관리</button>
-        </nav>
-        <div className="status-card">
-          <span className="dot" />
-          <p>{session.user?.email || "Fitback 사용자"} · {status}</p>
-        </div>
-        <button className="ghost-button logout-button" onClick={logout}>로그아웃</button>
-      </aside>
-
+      <Sidebar view={view} setView={setView} session={session} status={status} onLogout={logout} />
       <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Consultation Intelligence</p>
-            <h1>{VIEW_TITLES[activeView] || "Fitback"}</h1>
-          </div>
-          <div className="topbar-metrics">
-            <Metric label="HOT" value={customers.filter((item) => item.leadTemperature === "HOT").length} />
-            <Metric label="대기" value={customers.filter((item) => !item.leadTemperature).length} />
-            <Metric label="고객" value={customers.length} />
-          </div>
-        </header>
-
-        {activeView === "dashboard" && (
-          <DashboardView dashboard={dashboard} priorityCustomers={priorityCustomers} />
+        <Topbar view={view} customers={customers} />
+        {view === "dashboard" && <Dashboard customers={customers} followUps={followUps} />}
+        {view === "consultation" && (
+          <Consultation services={services} onAnalyze={analyzeConsultation} onSave={saveConsultation} />
         )}
-        {activeView === "consultation" && (
-          <ConsultationView
-            form={form}
-            services={services}
-            analysis={analysis}
-            duplicate={duplicate}
-            isBusy={isBusy}
-            updateForm={updateForm}
-            toggleService={toggleService}
-            checkDuplicate={checkDuplicate}
-            runPreview={runPreview}
-            saveConsultation={saveConsultation}
-          />
+        {view === "customers" && (
+          <Customers customers={customers} selectedCustomer={selectedCustomer} setSelectedId={setSelectedId} />
         )}
-        {activeView === "customers" && (
-          <CustomerView customers={customers} selectedCustomer={selectedCustomer} setSelectedId={setSelectedId} />
+        {view === "followups" && (
+          <FollowUps customers={customers} followUps={followUps} onGenerateMessages={generateMessages} />
         )}
-        {activeView === "followups" && (
-          <FollowupView customers={customers} followUps={followUps} onGenerateMessages={openMessageModal} />
-        )}
-        {activeView === "events" && (
-          <EventsView events={events} services={services} onCreateEvent={createEvent} />
-        )}
-        {activeView === "store" && (
-          <StoreView storeProfile={storeProfile} services={services} onSaveProfile={saveStoreProfile} onCreateService={createService} />
-        )}
+        {view === "reports" && <Reports customers={customers} />}
       </section>
-      {messageModal && (
-        <MessageModal
-          modal={messageModal}
-          onClose={closeMessageModal}
-          onCopy={copyMessage}
-          onSend={sendMessage}
-        />
-      )}
+      {messageModal && <MessageModal modal={messageModal} onClose={() => setMessageModal(null)} />}
     </main>
   );
 }
 
-function AuthScreen({ onLogin, onRegister }) {
+function AuthScreen({ onLogin, onRegister, onDemo }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({
     email: "",
@@ -401,531 +313,422 @@ function AuthScreen({ onLogin, onRegister }) {
     agreeTerms: false
   });
   const [message, setMessage] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
-
-  const submit = async (event) => {
+  async function submit(event) {
     event.preventDefault();
-    setIsBusy(true);
+    setBusy(true);
     setMessage("");
     try {
       if (mode === "login") {
-        await onLogin(form);
+        await onLogin({ email: form.email, password: form.password });
       } else {
         await onRegister(form);
+        setMode("verify");
       }
     } catch (error) {
-      setMessage(error.message || (mode === "login" ? "로그인에 실패했습니다. 계정 정보를 확인하세요." : "계정 생성에 실패했습니다."));
+      setMessage(error.message);
     } finally {
-      setIsBusy(false);
+      setBusy(false);
     }
-  };
+  }
 
   return (
     <main className="auth-shell">
       <section className="auth-visual">
-        <div className="brand auth-brand">
-          <span className="brand-mark">F</span>
-          <div>
-            <strong>Fitback</strong>
-            <small>AI 상담 관리</small>
-          </div>
+        <div className="auth-logo">
+          <span />
+          <strong>Fitback</strong>
         </div>
-        <div className="auth-copy">
-          <p className="eyebrow">Consultation Intelligence</p>
-          <h1>Fitback</h1>
-          <p>상담 메모를 고객 인사이트와 후속관리 큐로 연결합니다.</p>
-        </div>
+        <p>Fitback와 함께 데이터 기반 맞춤형 관리를 시작하세요.</p>
       </section>
-
       <section className="auth-panel">
-        <div className="auth-card">
-          <div className="auth-tabs" role="tablist" aria-label="인증 방식">
-            <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>로그인</button>
-            <button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>계정 생성</button>
-          </div>
-          <form onSubmit={submit}>
-            <div>
-              <p className="eyebrow">{mode === "login" ? "Welcome Back" : "Create Account"}</p>
-              <h2>{mode === "login" ? "로그인" : "관리자 계정 생성"}</h2>
+        <div className="auth-box">
+          <h1>{mode === "login" ? "로그인" : mode === "register" ? "계정 생성" : "이메일 인증"}</h1>
+          <p className="muted">Fitback와 함께하는 스마트한 고객 관리의 시작</p>
+
+          {mode === "verify" ? (
+            <div className="verify-card">
+              <label>
+                이메일 주소
+                <input value={form.email} readOnly />
+              </label>
+              <label>
+                인증번호
+                <input placeholder="인증번호 6자리 입력" />
+              </label>
+              <p className="timer">03:23 안에 인증을 완료해주세요.</p>
+              <button className="primary-button" onClick={() => setMode("login")}>인증 확인</button>
+              <button className="outline-button" onClick={() => setMode("login")}>로그인으로 돌아가기</button>
             </div>
-            {mode === "register" && (
+          ) : (
+            <form onSubmit={submit}>
               <label>
-                닉네임
-                <input value={form.nickname} onChange={(event) => update("nickname", event.target.value)} autoComplete="nickname" required />
+                이메일 주소
+                <input
+                  type="email"
+                  placeholder="example@kinetic.ai"
+                  value={form.email}
+                  onChange={(event) => setForm({ ...form, email: event.target.value })}
+                  required
+                />
               </label>
-            )}
-            <label>
-              이메일
-              <input type="email" value={form.email} onChange={(event) => update("email", event.target.value)} autoComplete="email" required />
-            </label>
-            <label>
-              비밀번호
-              <input type="password" value={form.password} onChange={(event) => update("password", event.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} required />
-            </label>
-            {mode === "register" && (
               <label>
-                비밀번호 확인
-                <input type="password" value={form.passwordConfirm} onChange={(event) => update("passwordConfirm", event.target.value)} autoComplete="new-password" required />
+                비밀번호
+                <input
+                  type="password"
+                  placeholder="••••••••"
+                  value={form.password}
+                  onChange={(event) => setForm({ ...form, password: event.target.value })}
+                  required
+                />
               </label>
-            )}
-            {mode === "register" && (
-              <label className="checkbox-field">
-                <input type="checkbox" checked={form.agreeTerms} onChange={(event) => update("agreeTerms", event.target.checked)} required />
-                이용약관에 동의합니다
-              </label>
-            )}
-            {message && <div className="notice warning">{message}</div>}
-            <div className="auth-actions">
-              <button className="primary-button" type="submit" disabled={isBusy}>
-                {mode === "login" ? "로그인" : "계정 생성 후 시작"}
+              {mode === "register" && (
+                <>
+                  <label>
+                    비밀번호 확인
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={form.passwordConfirm}
+                      onChange={(event) => setForm({ ...form, passwordConfirm: event.target.value })}
+                      required
+                    />
+                  </label>
+                  <label className="terms">
+                    <input
+                      type="checkbox"
+                      checked={form.agreeTerms}
+                      onChange={(event) => setForm({ ...form, agreeTerms: event.target.checked })}
+                      required
+                    />
+                    서비스 이용약관 및 개인정보 처리방침에 동의합니다.
+                  </label>
+                </>
+              )}
+              {message && <p className="form-message">{message}</p>}
+              <button className="primary-button" disabled={busy}>
+                {mode === "login" ? "로그인" : "계정 생성하기"}
               </button>
-            </div>
-          </form>
+            </form>
+          )}
+
+          <div className="divider"><span>또는</span></div>
+          <button className="google-button" onClick={onDemo}>
+            <span>G</span>
+            데모로 확인하기
+          </button>
+          <p className="auth-switch">
+            {mode === "login" ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"}
+            <button onClick={() => setMode(mode === "login" ? "register" : "login")}>
+              {mode === "login" ? "계정 생성" : "로그인"}
+            </button>
+          </p>
         </div>
       </section>
     </main>
   );
 }
 
-function ConsultationView({ form, services, analysis, duplicate, isBusy, updateForm, toggleService, checkDuplicate, runPreview, saveConsultation }) {
+function Sidebar({ view, setView, session, status, onLogout }) {
+  const items = [
+    ["dashboard", "홈"],
+    ["consultation", "상담고객관리"],
+    ["customers", "고객 인사이트"],
+    ["followups", "후속 연락 관리"],
+    ["reports", "분석리포트"]
+  ];
   return (
-    <div className="consultation-grid">
-      <section className="panel form-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Step 01</p>
-            <h2>기본 정보</h2>
-          </div>
-          <button className="ghost-button" onClick={checkDuplicate} disabled={isBusy}>중복 확인</button>
-        </div>
-        <div className="field-row">
-          <label>
-            고객명
-            <input value={form.name} onChange={(event) => updateForm("name", event.target.value)} />
-          </label>
-          <label>
-            연락처
-            <input value={form.phoneNum} onChange={(event) => updateForm("phoneNum", event.target.value)} />
-          </label>
-        </div>
-        <label>
-          유입 경로
-          <input value={form.inflowPath} onChange={(event) => updateForm("inflowPath", event.target.value)} />
-        </label>
-        <div className="service-list" aria-label="관심 서비스">
-          {services.length === 0 && <span className="inline-empty">등록된 서비스가 없습니다.</span>}
-          {services.map((service) => {
-            const serviceId = String(service.id || service.name);
-            return (
-            <button key={serviceId} className={form.serviceIds.includes(serviceId) ? "selected" : ""} onClick={() => toggleService(serviceId)}>
-              {service.name || serviceId}
-            </button>
-            );
-          })}
-        </div>
-        {duplicate && (
-          <div className={duplicate.isDuplicate ? "notice warning" : "notice success"}>
-            {duplicate.isDuplicate ? "이미 등록된 연락처입니다. 기존 고객 상세에서 상담을 추가하세요." : "신규 상담으로 진행할 수 있습니다."}
-          </div>
-        )}
-        <label className="memo-field">
-          Quick Memo
-          <textarea value={form.rawText} onChange={(event) => updateForm("rawText", event.target.value)} />
-        </label>
-        <div className="action-row">
-          <button className="secondary-button" onClick={runPreview} disabled={isBusy}>AI 미리보기</button>
-          <button className="primary-button" onClick={saveConsultation} disabled={isBusy}>기록 완료 및 저장</button>
+    <aside className="sidebar">
+      <div className="side-logo">
+        <span />
+        <strong>Fitback</strong>
+      </div>
+      <nav>
+        {items.map(([id, label]) => (
+          <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="account-card">
+        <strong>{session.user?.nickname || "관리자"}</strong>
+        <small>{session.user?.email || "demo@fitback.ai"}</small>
+        <p>{status}</p>
+      </div>
+      <button className="outline-button" onClick={onLogout}>로그아웃</button>
+    </aside>
+  );
+}
+
+function Topbar({ view, customers }) {
+  const titleMap = {
+    dashboard: "홈",
+    consultation: "신규 상담관리",
+    customers: "고객 AI 인사이트",
+    followups: "후속 연락 관리",
+    reports: "분석리포트"
+  };
+  return (
+    <header className="topbar">
+      <h2>{titleMap[view]}</h2>
+      <div className="topbar-actions">
+        <Metric label="미등록" value={customers.filter((item) => item.status !== "REGISTERED").length} />
+        <Metric label="HOT" value={customers.filter((item) => item.leadTemperature === "HOT").length} />
+        <Metric label="총 고객" value={customers.length} />
+      </div>
+    </header>
+  );
+}
+
+function Dashboard({ customers, followUps }) {
+  return (
+    <div className="dashboard-grid">
+      <section className="panel wide">
+        <h3>오늘의 운영 현황</h3>
+        <div className="metric-grid">
+          <Metric label="상담" value={customers.length} />
+          <Metric label="후속 대기" value={followUps.filter((item) => item.status !== "DONE").length} />
+          <Metric label="전환율" value="36%" />
+          <Metric label="AI 분석" value={customers.filter((item) => item.aiInsight).length} />
         </div>
       </section>
-
-      <section className="panel ai-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Step 02</p>
-            <h2>AI 분석 결과</h2>
-          </div>
-          <TemperatureBadge value={analysis?.leadTemperature || analysis?.temperature} />
+      <section className="panel">
+        <h3>우선 관리 고객</h3>
+        <div className="stack">
+          {customers
+            .slice()
+            .sort((a, b) => (b.priorityScore || 0) - (a.priorityScore || 0))
+            .map((customer) => (
+              <CustomerLine key={customer.id} customer={customer} />
+            ))}
         </div>
-        {analysis ? (
-          <>
-            <div className="summary-box">{analysis.summary}</div>
-            <div className="insight-grid">
-              <Insight label="판단 근거" value={analysis.temperatureBasis} />
-              <Insight label="Next Best Action" value={analysis.nextBestAction} />
-            </div>
-            <div className="chip-section">
-              <h3>설득 포인트</h3>
-              <div className="chips">
-                {(analysis.persuasionPoints || []).map((item) => <span key={item}>{item}</span>)}
-              </div>
-            </div>
-            <div className="signal-list">
-              <h3>상담 신호</h3>
-              {(analysis.signals || []).map((signal, index) => (
-                <div className="signal-item" key={`${signal.signalType}-${index}`}>
-                  <strong>{signal.signalType}</strong>
-                  <span>{signal.signalValue}</span>
-                  <small>{Math.round((Number(signal.confidence) || 0.7) * 100)}%</small>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">
-            <strong>AI 분석 결과가 없습니다.</strong>
-            <span>상담 메모를 입력한 뒤 미리보기를 실행하세요.</span>
-          </div>
-        )}
+      </section>
+      <section className="panel">
+        <h3>AI 상담 요약</h3>
+        <p className="body-copy">
+          가격 부담과 초보자 불안이 반복적으로 관찰됩니다. 바로 할인 안내를 하기보다 부담 없이 시작 가능한 구성과
+          첫 방문 일정을 먼저 제안하는 것이 좋습니다.
+        </p>
       </section>
     </div>
   );
 }
 
-function CustomerView({ customers, selectedCustomer, setSelectedId }) {
-  if (!selectedCustomer) {
-    return (
-      <section className="panel detail-panel">
-        <div className="empty-state">
-          <strong>등록된 고객이 없습니다.</strong>
-          <span>상담 등록에서 첫 고객을 저장하면 인사이트 목록이 생성됩니다.</span>
-        </div>
-      </section>
-    );
+function Consultation({ services, onAnalyze, onSave }) {
+  const [form, setForm] = useState({
+    name: "김민지",
+    phoneNum: "01012341024",
+    inflowPath: "인스타그램",
+    serviceIds: ["pt"],
+    rawText:
+      "32세 여성 회원님. 최근 업무 스트레스로 어깨 결림이 심하다고 하심. 주 2-3회 운동하고 싶고 체력 증진과 통증 완화가 목적. 가격은 부담스럽지만 체험 수업은 관심 있음."
+  });
+  const [analysis, setAnalysis] = useState(sampleAnalysis);
+  const [busy, setBusy] = useState(false);
+
+  async function runAnalyze() {
+    setBusy(true);
+    try {
+      setAnalysis(await onAnalyze(form));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      await onSave(form, analysis || sampleAnalysis);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleService(serviceId) {
+    setForm((prev) => ({
+      ...prev,
+      serviceIds: prev.serviceIds.includes(serviceId)
+        ? prev.serviceIds.filter((id) => id !== serviceId)
+        : [...prev.serviceIds, serviceId]
+    }));
   }
 
   return (
-    <div className="customer-layout">
-      <section className="panel list-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Customer</p>
-            <h2>관리 목록</h2>
-          </div>
+    <div className="content-grid">
+      <section className="panel form-panel">
+        <div className="section-head">
+          <h3>메모 초안</h3>
+          <button className="outline-button" onClick={runAnalyze} disabled={busy}>AI 분석하기</button>
         </div>
-        <div className="customer-list">
+        <textarea value={form.rawText} onChange={(event) => setForm({ ...form, rawText: event.target.value })} />
+        <div className="field-grid">
+          <label>
+            고객명
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </label>
+          <label>
+            연락처
+            <input value={form.phoneNum} onChange={(event) => setForm({ ...form, phoneNum: event.target.value })} />
+          </label>
+          <label>
+            유입 경로
+            <input value={form.inflowPath} onChange={(event) => setForm({ ...form, inflowPath: event.target.value })} />
+          </label>
+        </div>
+        <div className="chip-row">
+          {services.map((service) => (
+            <button
+              key={service.id || service.name}
+              className={form.serviceIds.includes(String(service.id || service.name)) ? "selected" : ""}
+              onClick={() => toggleService(String(service.id || service.name))}
+            >
+              {service.name}
+            </button>
+          ))}
+        </div>
+        <button className="primary-button" onClick={save} disabled={busy}>상담 등록하기</button>
+      </section>
+      <AiSummaryCard analysis={analysis} />
+      <NextActionCard analysis={analysis} />
+    </div>
+  );
+}
+
+function Customers({ customers, selectedCustomer, setSelectedId }) {
+  return (
+    <div className="customer-grid">
+      <section className="panel">
+        <h3>고객 목록</h3>
+        <div className="stack">
           {customers.map((customer) => (
-            <button key={customer.id} className={selectedCustomer.id === customer.id ? "customer-row active" : "customer-row"} onClick={() => setSelectedId(customer.id)}>
-              <span>
-                <strong>{customer.name}</strong>
-                <small>{customer.phoneNum}</small>
-              </span>
-              <TemperatureBadge value={customer.leadTemperature} compact />
+            <button
+              key={customer.id}
+              className={`customer-button ${selectedCustomer?.id === customer.id ? "active" : ""}`}
+              onClick={() => setSelectedId(customer.id)}
+            >
+              <CustomerLine customer={customer} />
             </button>
           ))}
         </div>
       </section>
-      <section className="panel detail-panel">
-        <div className="detail-hero">
+      <section className="panel wide">
+        <div className="section-head">
           <div>
-            <p className="eyebrow">Analysis Detail</p>
-            <h2>{selectedCustomer.name}</h2>
-            <span>{selectedCustomer.phoneNum}</span>
+            <h3>{selectedCustomer?.name || "고객"} 기본 정보</h3>
+            <p className="muted">{selectedCustomer?.phoneNum}</p>
           </div>
-          <div className="score-ring">{selectedCustomer.priorityScore || 50}</div>
+          <Temperature value={selectedCustomer?.leadTemperature} />
         </div>
-        <div className="insight-grid">
-          <Insight label="고객 온도" value={selectedCustomer.aiInsight?.temperatureBasis || "분석 대기 중"} />
-          <Insight label="미등록 사유" value={selectedCustomer.primaryReason || "아직 없음"} />
-          <Insight label="추천 행동" value={selectedCustomer.nextBestAction || "상담 후속 액션을 생성하세요."} />
-        </div>
-        <div className="signal-list">
-          <h3>Signals</h3>
-          {(selectedCustomer.signals || []).map((signal, index) => (
-            <div className="signal-item" key={`${signal.signalType}-${index}`}>
-              <strong>{signal.signalType}</strong>
-              <span>{signal.signalValue}</span>
-              <small>{Math.round((signal.confidence || 0.7) * 100)}%</small>
-            </div>
-          ))}
-        </div>
-        <div className="timeline">
-          <h3>상담 기록</h3>
-          {(selectedCustomer.consultations || []).map((consultation) => (
-            <article key={consultation.id}>
-              <strong>{consultation.summary || "상담 요약 없음"}</strong>
-              <p>{consultation.rawText}</p>
-            </article>
-          ))}
+        <AiSummaryCard analysis={selectedCustomer?.aiInsight || sampleAnalysis} embedded />
+        <div className="detail-list">
+          <Info label="미전환 사유" value={selectedCustomer?.primaryReason || "NEEDS_CONFIRMATION"} />
+          <Info label="우선순위 점수" value={selectedCustomer?.priorityScore || 70} />
+          <Info label="다음 액션" value={selectedCustomer?.nextBestAction || sampleAnalysis.nextBestAction} />
         </div>
       </section>
     </div>
   );
 }
 
-function FollowupView({ customers, followUps, onGenerateMessages }) {
-  const targets = followUps
-    .filter((followUp) => followUp.status !== "DONE")
-    .map((followUp) => ({ followUp, customer: customers.find((item) => item.id === followUp.customerId) }))
-    .sort((left, right) => (right.customer?.priorityScore || 0) - (left.customer?.priorityScore || 0));
-
+function FollowUps({ customers, followUps, onGenerateMessages }) {
   return (
-    <section className="panel followup-panel">
-      <div className="panel-head">
-        <div>
-          <p className="eyebrow">Follow-up</p>
-          <h2>오늘 연락할 고객</h2>
-        </div>
+    <section className="panel wide">
+      <h3>오늘 연락할 고객</h3>
+      <div className="follow-grid">
+        {followUps.map((followUp) => {
+          const customer = customers.find((item) => item.id === followUp.customerId) || customers[0];
+          return (
+            <article key={followUp.id} className="follow-card">
+              <CustomerLine customer={customer} />
+              <p>{customer?.nextBestAction || sampleAnalysis.nextBestAction}</p>
+              <button className="primary-button" onClick={() => onGenerateMessages(followUp)}>메시지 생성</button>
+            </article>
+          );
+        })}
       </div>
-      <div className="followup-grid">
-        {targets.length === 0 && (
-          <div className="empty-state">
-            <strong>후속관리 대상이 없습니다.</strong>
-            <span>상담 저장 후 추천 행동이 생성되면 이곳에 표시됩니다.</span>
-          </div>
-        )}
-        {targets.map(({ followUp, customer }) => (
-          <article key={followUp.id} className="followup-item">
-            <div>
-              <strong>{customer?.name || "고객"}</strong>
-              <TemperatureBadge value={customer?.leadTemperature} compact />
-            </div>
-            <p>{customer?.nextBestAction || followUp.persuasionPoints || "추천 행동이 아직 없습니다."}</p>
-            <button className="ghost-button" onClick={() => onGenerateMessages(followUp)}>메시지 초안 생성</button>
-          </article>
+    </section>
+  );
+}
+
+function Reports({ customers }) {
+  const warmCount = customers.filter((item) => item.leadTemperature === "WARM").length;
+  const hotCount = customers.filter((item) => item.leadTemperature === "HOT").length;
+  return (
+    <div className="dashboard-grid">
+      <section className="panel">
+        <h3>온도 분포</h3>
+        <div className="bar-list">
+          <Bar label="HOT" value={hotCount} total={customers.length} />
+          <Bar label="WARM" value={warmCount} total={customers.length} />
+          <Bar label="COLD" value={customers.length - hotCount - warmCount} total={customers.length} />
+        </div>
+      </section>
+      <section className="panel">
+        <h3>주요 미전환 사유</h3>
+        <div className="chip-row static">
+          <span>가격 민감도</span>
+          <span>일정 불일치</span>
+          <span>초보자 불안</span>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AiSummaryCard({ analysis, embedded = false }) {
+  return (
+    <section className={`panel ai-card ${embedded ? "embedded" : ""}`}>
+      <div className="section-head">
+        <h3>AI 등록 가능성 분석</h3>
+        <Temperature value={analysis?.leadTemperature || analysis?.temperature} />
+      </div>
+      <div className="temperature-word">{analysis?.leadTemperature || analysis?.temperature || "WARM"}</div>
+      <Info label="AI 상담 요약" value={analysis?.summary || sampleAnalysis.summary} />
+      <Info label="판단 근거" value={analysis?.temperatureBasis || sampleAnalysis.temperatureBasis} />
+      <div className="chip-row static">
+        {(analysis?.persuasionPoints || sampleAnalysis.persuasionPoints).map((item) => (
+          <span key={item}>{item}</span>
         ))}
       </div>
     </section>
   );
 }
 
-function DashboardView({ dashboard, priorityCustomers }) {
+function NextActionCard({ analysis }) {
   return (
-    <div className="dashboard-grid">
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Overview</p>
-            <h2>오늘의 운영 현황</h2>
-          </div>
-        </div>
-        <div className="topbar-metrics dashboard-metrics">
-          <Metric label="오늘 상담" value={dashboard?.todayConsultCount ?? 0} />
-          <Metric label="등록 전환율" value={`${dashboard?.monthlyRegistrationRate ?? 0}%`} />
-          <Metric label="대기 후속관리" value={dashboard?.pendingFollowUpCount ?? 0} />
-          <Metric label="지연 후속관리" value={dashboard?.overdueFollowUpCount ?? 0} />
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Priority</p>
-            <h2>우선 관리 고객</h2>
-          </div>
-        </div>
-        {priorityCustomers.length === 0 ? (
-          <div className="empty-state">
-            <strong>우선 관리할 고객이 없습니다.</strong>
-            <span>상담이 등록되면 우선순위가 높은 고객이 이곳에 표시됩니다.</span>
-          </div>
-        ) : (
-          <div className="customer-list">
-            {priorityCustomers.map((customer) => (
-              <div key={customer.id} className="customer-row">
-                <span>
-                  <strong>{customer.name}</strong>
-                  <small>{customer.phoneNum}</small>
-                </span>
-                <span>{customer.priorityScore ?? 50}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
+    <section className="panel action-card">
+      <h3>다음 최적 액션</h3>
+      <p>{analysis?.nextBestAction || sampleAnalysis.nextBestAction}</p>
+      <Info label="설득 포인트" value={(analysis?.persuasionPoints || sampleAnalysis.persuasionPoints).join(", ")} />
+    </section>
   );
 }
 
-function EventsView({ events, services, onCreateEvent }) {
-  const [form, setForm] = useState({ name: "", serviceId: "" });
-  const [isBusy, setIsBusy] = useState(false);
-
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!form.name || !form.serviceId) return;
-    setIsBusy(true);
-    try {
-      await onCreateEvent(form);
-      setForm({ name: "", serviceId: "" });
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
+function MessageModal({ modal, onClose }) {
   return (
-    <div className="consultation-grid">
-      <section className="panel form-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">New</p>
-            <h2>이벤트 생성</h2>
-          </div>
-        </div>
-        <form onSubmit={submit}>
-          <label>
-            이벤트명
-            <input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} required />
-          </label>
-          <label>
-            대상 서비스
-            <select value={form.serviceId} onChange={(event) => setForm((prev) => ({ ...prev, serviceId: event.target.value }))} required>
-              <option value="">서비스 선택</option>
-              {services.map((service) => (
-                <option key={service.id} value={service.id}>{service.name}</option>
-              ))}
-            </select>
-          </label>
-          <div className="action-row">
-            <button className="primary-button" type="submit" disabled={isBusy}>이벤트 생성</button>
-          </div>
-        </form>
-      </section>
-      <section className="panel ai-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">History</p>
-            <h2>생성된 이벤트</h2>
-          </div>
-        </div>
-        {events.length === 0 ? (
-          <div className="empty-state">
-            <strong>생성된 이벤트가 없습니다.</strong>
-            <span>왼쪽에서 첫 이벤트를 만들어보세요.</span>
-          </div>
-        ) : (
-          <div className="signal-list">
-            {events.map((event) => (
-              <div className="signal-item" key={event.id}>
-                <strong>{event.name}</strong>
-                <span>대상 {event.targetCount ?? 0}명</span>
-                <small>{event.createdAt ? new Date(event.createdAt).toLocaleDateString() : ""}</small>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function StoreView({ storeProfile, services, onSaveProfile, onCreateService }) {
-  const [profileForm, setProfileForm] = useState({ name: storeProfile?.name || "", storeType: storeProfile?.storeType || "GYM" });
-  const [serviceName, setServiceName] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
-
-  useEffect(() => {
-    setProfileForm({ name: storeProfile?.name || "", storeType: storeProfile?.storeType || "GYM" });
-  }, [storeProfile]);
-
-  const submitProfile = async (event) => {
-    event.preventDefault();
-    setIsBusy(true);
-    try {
-      await onSaveProfile(profileForm);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const submitService = async (event) => {
-    event.preventDefault();
-    if (!serviceName.trim()) return;
-    setIsBusy(true);
-    try {
-      await onCreateService(serviceName.trim());
-      setServiceName("");
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  return (
-    <div className="consultation-grid">
-      <section className="panel form-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Profile</p>
-            <h2>매장 정보</h2>
-          </div>
-        </div>
-        <form onSubmit={submitProfile}>
-          <label>
-            매장명
-            <input value={profileForm.name} onChange={(event) => setProfileForm((prev) => ({ ...prev, name: event.target.value }))} required />
-          </label>
-          <label>
-            매장 유형
-            <select value={profileForm.storeType} onChange={(event) => setProfileForm((prev) => ({ ...prev, storeType: event.target.value }))}>
-              <option value="GYM">GYM</option>
-              <option value="OTHER">OTHER</option>
-            </select>
-          </label>
-          <div className="action-row">
-            <button className="primary-button" type="submit" disabled={isBusy}>저장</button>
-          </div>
-        </form>
-      </section>
-      <section className="panel ai-panel">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Services</p>
-            <h2>제공 서비스</h2>
-          </div>
-        </div>
-        <div className="chip-section">
-          <div className="chips">
-            {services.length === 0 && <span className="inline-empty">등록된 서비스가 없습니다.</span>}
-            {services.map((service) => <span key={service.id || service.name}>{service.name}</span>)}
-          </div>
-        </div>
-        <form onSubmit={submitService} className="field-row">
-          <label>
-            새 서비스명
-            <input value={serviceName} onChange={(event) => setServiceName(event.target.value)} />
-          </label>
-          <button className="secondary-button" type="submit" disabled={isBusy} style={{ marginTop: 28 }}>추가</button>
-        </form>
-      </section>
-    </div>
-  );
-}
-
-function MessageModal({ modal, onClose, onCopy, onSend }) {
-  return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Message Drafts</p>
-            <h2>{modal.customerName}님께 보낼 메시지</h2>
-          </div>
-          <button className="ghost-button" onClick={onClose}>닫기</button>
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="modal panel" onClick={(event) => event.stopPropagation()}>
+        <div className="section-head">
+          <h3>{modal.customer?.name || "고객"} 메시지 초안</h3>
+          <button className="outline-button" onClick={onClose}>닫기</button>
         </div>
         {modal.isBusy ? (
-          <div className="empty-state">
-            <strong>메시지 초안을 생성하는 중입니다...</strong>
-          </div>
-        ) : modal.messages.length === 0 ? (
-          <div className="empty-state">
-            <strong>생성된 메시지 초안이 없습니다.</strong>
-          </div>
+          <p className="body-copy">AI가 후속 메시지를 생성하는 중입니다.</p>
         ) : (
-          <div className="signal-list">
+          <div className="stack">
             {modal.messages.map((message) => (
-              <div className="signal-item message-item" key={message.id}>
+              <article className="message-card" key={message.id || message.versionType}>
                 <strong>{message.versionType} · {message.tonePreset}</strong>
-                <span>{message.content}</span>
-                <div className="action-row">
-                  <button className="ghost-button" onClick={() => onCopy(message.id)}>복사 표시</button>
-                  <button className="secondary-button" onClick={() => onSend(message.id)}>발송</button>
-                  <small>{message.deliveryStatus}</small>
-                </div>
-              </div>
+                <p>{message.content}</p>
+                <button className="outline-button" onClick={() => navigator.clipboard?.writeText(message.content)}>
+                  복사하기
+                </button>
+              </article>
             ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
@@ -939,36 +742,80 @@ function Metric({ label, value }) {
   );
 }
 
-function Insight({ label, value }) {
+function Info({ label, value }) {
   return (
-    <div className="insight">
+    <div className="info-row">
       <span>{label}</span>
-      <strong>{value || "확인 필요"}</strong>
+      <strong>{value}</strong>
     </div>
   );
 }
 
-function TemperatureBadge({ value, compact = false }) {
-  const normalized = value || "PENDING";
-  return <span className={`temp-badge ${normalized.toLowerCase()} ${compact ? "compact" : ""}`}>{normalized}</span>;
+function CustomerLine({ customer }) {
+  return (
+    <div className="customer-line">
+      <div>
+        <strong>{customer?.name}</strong>
+        <small>{customer?.phoneNum}</small>
+      </div>
+      <Temperature value={customer?.leadTemperature} />
+    </div>
+  );
 }
 
-function maskPhone(phone) {
-  if (!phone || phone.length < 4) return phone;
-  return `***-****-${phone.slice(-4)}`;
+function Temperature({ value }) {
+  const normalized = value || "PENDING";
+  return <span className={`temp ${normalized.toLowerCase()}`}>{normalized}</span>;
+}
+
+function Bar({ label, value, total }) {
+  const width = total ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="bar-row">
+      <span>{label}</span>
+      <div><i style={{ width: `${width}%` }} /></div>
+      <strong>{value}</strong>
+    </div>
+  );
 }
 
 function normalizeCustomer(customer) {
-  const analysis = customer.aiInsight || {};
+  const insight = customer.aiInsight || {};
   return {
     ...customer,
-    leadTemperature: customer.leadTemperature || analysis.leadTemperature || analysis.temperature,
-    priorityScore: customer.priorityScore || analysis.priorityScore || (analysis.leadTemperature === "HOT" ? 90 : 70),
-    nextBestAction: customer.nextBestAction || analysis.nextBestAction,
-    primaryReason: customer.primaryReason || analysis.reasons?.[0]?.reasonType,
-    signals: customer.signals || analysis.signals || [],
+    leadTemperature: customer.leadTemperature || insight.leadTemperature || insight.temperature || "PENDING",
+    priorityScore: customer.priorityScore || insight.priorityScore || 60,
+    nextBestAction: customer.nextBestAction || insight.nextBestAction,
+    primaryReason: customer.primaryReason || customer.nonConversionReasons?.[0]?.reasonType,
+    signals: customer.signals || insight.signals || [],
     consultations: customer.consultations || []
   };
+}
+
+function maskPhone(phone) {
+  if (!phone || phone.length < 4) return phone || "";
+  return `***-****-${phone.slice(-4)}`;
+}
+
+function buildDemoMessages(customer) {
+  const name = customer?.name || "고객";
+  return [
+    {
+      versionType: "SHORT",
+      tonePreset: "FRIENDLY",
+      content: `${name}님, 지난 상담 내용 기준으로 부담 없이 시작 가능한 체험 수업 시간을 안내드릴게요.`
+    },
+    {
+      versionType: "STANDARD",
+      tonePreset: "PROFESSIONAL",
+      content: `${name}님께 맞는 통증 완화 중심 루틴과 비혼잡 시간대를 정리했습니다. 편하신 시간에 다시 상담 도와드리겠습니다.`
+    },
+    {
+      versionType: "DETAILED",
+      tonePreset: "CARING",
+      content: `${name}님이 말씀해주신 어깨 결림과 체력 증진 목표를 기준으로, 처음에는 부담 적은 구성부터 시작하실 수 있게 안내드리겠습니다.`
+    }
+  ];
 }
 
 createRoot(document.getElementById("root")).render(<App />);
