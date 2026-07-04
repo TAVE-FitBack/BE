@@ -2,9 +2,14 @@ package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
+import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.enums.Gender;
+import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
@@ -17,6 +22,7 @@ import com.fitback.domain.user.entity.User;
 import com.fitback.domain.user.enums.UserRole;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
+import com.fitback.global.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,7 +30,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -148,5 +156,97 @@ class ConsultationServiceTest {
         verify(serviceRepository).findAllByStoreIdAndActiveTrue(storeId);
         verify(inflowPathOptionRepository).findAllByStoreIdAndActiveTrueOrderByDisplayOrderAsc(storeId);
         verify(userRepository).findAllByStore_Id(storeId);
+    }
+
+    @Test
+    @DisplayName("연락처 검색 시 phone이 비어 있으면 INVALID_INPUT_VALUE 예외가 발생한다")
+    void searchCustomerByPhoneBlankPhone() {
+        UUID storeId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> consultationService.searchCustomerByPhone(storeId, " "))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.INVALID_INPUT_VALUE);
+
+        verifyNoInteractions(customerRepository, consultationRepository);
+    }
+
+    @Test
+    @DisplayName("연락처 검색 결과 기존 고객이 없으면 exists=false와 null 데이터를 반환한다")
+    void searchCustomerByPhoneNotFound() {
+        UUID storeId = UUID.randomUUID();
+        String phone = "010-0000-0000";
+
+        when(customerRepository.findByPhoneNumAndStoreId(phone, storeId))
+                .thenReturn(Optional.empty());
+
+        ConsultationCustomerSearchResponse response = consultationService.searchCustomerByPhone(storeId, phone);
+
+        assertThat(response.isExists()).isFalse();
+        assertThat(response.getCustomer()).isNull();
+        assertThat(response.getRedirectUrl()).isNull();
+
+        verify(customerRepository).findByPhoneNumAndStoreId(phone, storeId);
+        verifyNoInteractions(consultationRepository);
+    }
+
+    @Test
+    @DisplayName("연락처 검색 결과 기존 고객이 있으면 기본정보와 고객 상세 redirectUrl을 반환한다")
+    void searchCustomerByPhoneFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        String phone = "010-1234-5678";
+        LocalDate birthDate = LocalDate.of(1995, 1, 1);
+        LocalDate latestConsultAt = LocalDate.of(2026, 6, 30);
+
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer customer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(birthDate)
+                .phoneNum(phone)
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(CustomerStatus.PENDING)
+                .registeredService(null)
+                .firstConsultAt(latestConsultAt)
+                .latestConsultAt(latestConsultAt)
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreId(phone, storeId))
+                .thenReturn(Optional.of(customer));
+
+        ConsultationCustomerSearchResponse response = consultationService.searchCustomerByPhone(storeId, phone);
+
+        assertThat(response.isExists()).isTrue();
+        assertThat(response.getRedirectUrl()).isEqualTo("/customers/" + customerId + "/detail");
+        assertThat(response.getCustomer()).isNotNull();
+        assertThat(response.getCustomer().getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getCustomer().getName()).isEqualTo("김고객");
+        assertThat(response.getCustomer().getGender()).isEqualTo(Gender.FEMALE);
+        assertThat(response.getCustomer().getBirthDate()).isEqualTo(birthDate);
+        assertThat(response.getCustomer().getPhoneNum()).isEqualTo(phone);
+        assertThat(response.getCustomer().getRegisteredServiceId()).isNull();
+        assertThat(response.getCustomer().getStatus()).isEqualTo(CustomerStatus.PENDING);
+        assertThat(response.getCustomer().getPreferredContactChannel()).isEqualTo(PreferredContactChannel.KAKAO);
+        assertThat(response.getCustomer().getInflowPathId()).isEqualTo(inflowPathId);
+        assertThat(response.getCustomer().getLatestConsultAt()).isEqualTo(latestConsultAt);
+
+        verify(customerRepository).findByPhoneNumAndStoreId(phone, storeId);
+        verifyNoInteractions(consultationRepository);
     }
 }
