@@ -33,6 +33,8 @@ import com.fitback.domain.store.enums.StoreType;
 import com.fitback.domain.user.entity.User;
 import com.fitback.domain.user.enums.UserRole;
 import com.fitback.domain.user.repository.UserRepository;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fitback.global.exception.BusinessException;
 import com.fitback.global.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
@@ -587,8 +589,10 @@ class ConsultationServiceTest {
 
         ArgumentCaptor<Customer> customerCaptor = ArgumentCaptor.forClass(Customer.class);
         ArgumentCaptor<InterestService> interestServiceCaptor = ArgumentCaptor.forClass(InterestService.class);
+        ArgumentCaptor<Consultation> consultationCaptor = ArgumentCaptor.forClass(Consultation.class);
         verify(customerRepository).save(customerCaptor.capture());
         verify(interestServiceRepository).save(interestServiceCaptor.capture());
+        verify(consultationRepository).save(consultationCaptor.capture());
 
         Customer customerToSave = customerCaptor.getValue();
         assertThat(customerToSave.getStatus()).isEqualTo(expectedStatus);
@@ -597,6 +601,12 @@ class ConsultationServiceTest {
         InterestService interestService = interestServiceCaptor.getValue();
         assertThat(interestService.getCustomer()).isEqualTo(savedCustomer);
         assertThat(interestService.getService()).isEqualTo(service);
+
+        Consultation consultationToSave = consultationCaptor.getValue();
+        assertThat(consultationToSave.getCustomer()).isEqualTo(savedCustomer);
+        assertThat(consultationToSave.getSessionNo()).isEqualTo(1);
+        assertThat(consultationToSave.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
+        assertThat(consultationToSave.getSourceType()).isEqualTo(ConsultationSourceType.DIRECT);
     }
 
     @Test
@@ -915,6 +925,23 @@ class ConsultationServiceTest {
         verify(customerRepository).findByPhoneNumAndStoreId("010-1234-5678", storeId);
         verifyNoMoreInteractions(customerRepository);
         verifyNoInteractions(consultationRepository, customerActivityTimelineRepository, interestServiceRepository);
+    }
+
+    @Test
+    @DisplayName("NO_SHOW is rejected from consultation registration status request values")
+    void createConsultationRejectsNoShowRegistrationStatus() {
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        assertThatThrownBy(() -> objectMapper.readValue(
+                """
+                {
+                  "registrationStatus": "NO_SHOW"
+                }
+                """,
+                ConsultationCreateRequest.ConsultationInfo.class
+        ))
+                .isInstanceOf(InvalidFormatException.class)
+                .hasMessageContaining("NO_SHOW");
     }
 
     private ConsultationCheckPreviewRequest checkPreviewRequest(UUID serviceId) {
