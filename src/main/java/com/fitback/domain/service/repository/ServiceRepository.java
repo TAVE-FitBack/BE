@@ -12,4 +12,6 @@ public interface ServiceRepository extends JpaRepository<Service, UUID> {
     List<Service> findAllByStoreIdAndActiveTrue(UUID storeId);
 
     Optional<Service> findByIdAndStoreId(UUID id, UUID storeId);
+
+    Optional<Service> findByIdAndStoreIdAndActiveTrue(UUID id, UUID storeId);
 }

@@ -1,6 +1,8 @@
 package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
@@ -29,14 +31,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -248,5 +253,116 @@ class ConsultationServiceTest {
 
         verify(customerRepository).findByPhoneNumAndStoreId(phone, storeId);
         verifyNoInteractions(consultationRepository);
+    }
+
+    @Test
+    @DisplayName("AI 중간 점검 시 선택한 서비스가 없으면 SERVICE_NOT_FOUND 예외가 발생한다")
+    void checkPreviewServiceNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        ConsultationCheckPreviewRequest request = checkPreviewRequest(serviceId);
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> consultationService.checkPreview(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.SERVICE_NOT_FOUND);
+
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verifyNoInteractions(aiConsultationClient);
+    }
+
+    @Test
+    @DisplayName("AI 중간 점검 시 비활성 또는 타매장 서비스는 SERVICE_NOT_FOUND 예외가 발생한다")
+    void checkPreviewInactiveOrOtherStoreService() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        ConsultationCheckPreviewRequest request = checkPreviewRequest(serviceId);
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> consultationService.checkPreview(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.SERVICE_NOT_FOUND);
+
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verifyNoInteractions(aiConsultationClient);
+    }
+
+    @Test
+    @DisplayName("AI 중간 점검 시 AI 서버 호출에 실패하면 AI_CHECK_FAILED 예외가 전파된다")
+    void checkPreviewAiFailed() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        ConsultationCheckPreviewRequest request = checkPreviewRequest(serviceId);
+        Service service = Service.builder()
+                .id(serviceId)
+                .name("PT")
+                .active(true)
+                .build();
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(aiConsultationClient.checkPreview(any(AiCheckPreviewRequest.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_CHECK_FAILED));
+
+        assertThatThrownBy(() -> consultationService.checkPreview(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.AI_CHECK_FAILED);
+
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verify(aiConsultationClient).checkPreview(any(AiCheckPreviewRequest.class));
+        verifyNoInteractions(customerRepository, consultationRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("AI 중간 점검 결과는 DB에 저장하지 않고 AI 응답을 그대로 반환한다")
+    void checkPreviewDoesNotSaveAiResult() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        ConsultationCheckPreviewRequest request = checkPreviewRequest(serviceId);
+        Service service = Service.builder()
+                .id(serviceId)
+                .name("PT")
+                .active(true)
+                .build();
+        Map<String, Object> aiResponse = Map.of(
+                "overallStatus", "SATISFIED",
+                "suggestion", "충분합니다."
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(aiConsultationClient.checkPreview(any(AiCheckPreviewRequest.class)))
+                .thenReturn(aiResponse);
+
+        Map<String, Object> response = consultationService.checkPreview(storeId, request);
+
+        assertThat(response).isEqualTo(aiResponse);
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verify(aiConsultationClient).checkPreview(any(AiCheckPreviewRequest.class));
+        verifyNoInteractions(customerRepository, consultationRepository, customerActivityTimelineRepository);
+    }
+
+    private ConsultationCheckPreviewRequest checkPreviewRequest(UUID serviceId) {
+        ConsultationCheckPreviewRequest request = new ConsultationCheckPreviewRequest();
+        ConsultationCheckPreviewRequest.CustomerInfo customer = new ConsultationCheckPreviewRequest.CustomerInfo();
+        ConsultationCheckPreviewRequest.ConsultationInfo consultation = new ConsultationCheckPreviewRequest.ConsultationInfo();
+
+        ReflectionTestUtils.setField(customer, "name", "김고객");
+        ReflectionTestUtils.setField(customer, "gender", Gender.FEMALE);
+        ReflectionTestUtils.setField(customer, "birthDate", LocalDate.of(1995, 1, 1));
+        ReflectionTestUtils.setField(customer, "phoneNum", "010-1234-5678");
+        ReflectionTestUtils.setField(consultation, "consultedServiceId", serviceId);
+        ReflectionTestUtils.setField(consultation, "rawText", "운동 목적과 경험을 확인했다.");
+        ReflectionTestUtils.setField(request, "customer", customer);
+        ReflectionTestUtils.setField(request, "consultation", consultation);
+
+        return request;
     }
 }

@@ -101,7 +101,7 @@ public class ConsultationService {
         }
 
         Service service = serviceRepository
-                .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
+                .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
         AiCheckPreviewRequest aiRequest = AiCheckPreviewRequest.builder()
