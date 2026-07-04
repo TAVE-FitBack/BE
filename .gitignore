@@ -58,3 +58,9 @@ logs/
 .idea/dataSources/
 .idea/dataSources.local.xml
 .idea/tasks.xml
+
+# Local AI agent instructions
+AGENTS.local.md
+AGENTS.md
+docs/
+.github/pull_request_template.md
