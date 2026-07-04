@@ -42,7 +42,7 @@ public class Consultation extends BaseTimeEntity {
     private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "consulted_service_id")
+    @JoinColumn(name = "consulted_service_id", nullable = false)
     private Service consultedService;
 
     @Column(name = "consulted_at", nullable = false)
