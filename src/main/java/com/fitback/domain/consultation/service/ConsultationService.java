@@ -124,7 +124,7 @@ public class ConsultationService {
         }
 
         Service service = serviceRepository
-                .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
+                .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
         User counselor = userRepository
@@ -249,14 +249,12 @@ public class ConsultationService {
             Service service,
             ConsultationCreateRequest request
     ) {
-        int nextSessionNo = consultationRepository.findMaxSessionNoByCustomerId(customer.getId()) + 1;
-
         Consultation consultation = Consultation.builder()
                 .customer(customer)
                 .user(counselor)
                 .consultedService(service)
                 .consultedAt(request.getConsultation().getConsultedAt())
-                .sessionNo(nextSessionNo)
+                .sessionNo(1)
                 .stage(ConsultationStage.CONSULTATION)
                 .sourceType(ConsultationSourceType.DIRECT)
                 .rawText(request.getConsultation().getRawText())
