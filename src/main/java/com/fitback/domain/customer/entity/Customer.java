@@ -64,24 +64,6 @@ public class Customer extends BaseTimeEntity {
     @Column(name = "latest_consult_at", nullable = false)
     private LocalDate latestConsultAt;
 
-    public void updateBasicInfo(
-            String name,
-            Gender gender,
-            LocalDate birthDate,
-            String phoneNum,
-            PreferredContactChannel preferredContactChannel,
-            InflowPathOption inflowPathOption,
-            LocalDate latestConsultAt
-    ) {
-        this.name = name;
-        this.gender = gender;
-        this.birthDate = birthDate;
-        this.phoneNum = phoneNum;
-        this.preferredContactChannel = preferredContactChannel;
-        this.inflowPathOption = inflowPathOption;
-        this.latestConsultAt = latestConsultAt;
-    }
-
     public void markRegistered(Service registeredService) {
         this.registeredService = registeredService;
         this.status = CustomerStatus.REGISTERED;

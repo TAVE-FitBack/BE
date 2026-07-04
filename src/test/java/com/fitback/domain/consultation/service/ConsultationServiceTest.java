@@ -3,8 +3,14 @@ package com.fitback.domain.consultation.service;
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.ConsultationCreateRequest;
+import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
+import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
+import com.fitback.domain.consultation.enums.ConsultationSourceType;
+import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
@@ -29,11 +35,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -349,6 +358,126 @@ class ConsultationServiceTest {
         verifyNoInteractions(customerRepository, consultationRepository, customerActivityTimelineRepository);
     }
 
+    @Test
+    @DisplayName("상담 등록은 customerId 없이 신규 고객을 INSERT하고 최초 상담으로 저장한다")
+    void createConsultationCreatesNewCustomerOnly() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-06-30T14:00:00+09:00");
+
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer savedCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .registeredService(service)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(CustomerStatus.REGISTERED)
+                .firstConsultAt(consultedAt.toLocalDate())
+                .latestConsultAt(consultedAt.toLocalDate())
+                .build();
+        Consultation savedConsultation = Consultation.builder()
+                .id(consultationId)
+                .customer(savedCustomer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(consultedAt)
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("상담 원문")
+                .build();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                ConsultationRegistrationStatus.REGISTERED,
+                consultedAt
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(customerRepository.findByPhoneNumAndStoreId("010-1234-5678", storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenReturn(savedCustomer);
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenReturn(savedConsultation);
+
+        ConsultationCreateResponse response = consultationService.createConsultation(storeId, request);
+
+        assertThat(response.getConsultationId()).isEqualTo(consultationId);
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getSessionNo()).isEqualTo(1);
+        assertThat(response.getRedirectUrl()).isEqualTo("/customers/" + customerId + "/detail");
+
+        ArgumentCaptor<Customer> customerCaptor = ArgumentCaptor.forClass(Customer.class);
+        ArgumentCaptor<Consultation> consultationCaptor = ArgumentCaptor.forClass(Consultation.class);
+        verify(customerRepository).save(customerCaptor.capture());
+        verify(consultationRepository).save(consultationCaptor.capture());
+
+        Customer customerToSave = customerCaptor.getValue();
+        assertThat(customerToSave.getName()).isEqualTo("김고객");
+        assertThat(customerToSave.getGender()).isEqualTo(Gender.FEMALE);
+        assertThat(customerToSave.getBirthDate()).isEqualTo(LocalDate.of(1995, 1, 1));
+        assertThat(customerToSave.getPhoneNum()).isEqualTo("010-1234-5678");
+        assertThat(customerToSave.getPreferredContactChannel()).isEqualTo(PreferredContactChannel.KAKAO);
+        assertThat(customerToSave.getInflowPathOption()).isEqualTo(inflowPathOption);
+        assertThat(customerToSave.getStatus()).isEqualTo(CustomerStatus.REGISTERED);
+        assertThat(customerToSave.getRegisteredService()).isEqualTo(service);
+
+        Consultation consultationToSave = consultationCaptor.getValue();
+        assertThat(consultationToSave.getCustomer()).isEqualTo(savedCustomer);
+        assertThat(consultationToSave.getSessionNo()).isEqualTo(1);
+        assertThat(consultationToSave.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
+        assertThat(consultationToSave.getSourceType()).isEqualTo(ConsultationSourceType.DIRECT);
+        assertThat(consultationToSave.getRawText()).isEqualTo("상담 원문");
+
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verify(customerRepository).findByPhoneNumAndStoreId("010-1234-5678", storeId);
+        verifyNoMoreInteractions(customerRepository);
+    }
+
     private ConsultationCheckPreviewRequest checkPreviewRequest(UUID serviceId) {
         ConsultationCheckPreviewRequest request = new ConsultationCheckPreviewRequest();
         ConsultationCheckPreviewRequest.CustomerInfo customer = new ConsultationCheckPreviewRequest.CustomerInfo();
@@ -360,6 +489,34 @@ class ConsultationServiceTest {
         ReflectionTestUtils.setField(customer, "phoneNum", "010-1234-5678");
         ReflectionTestUtils.setField(consultation, "consultedServiceId", serviceId);
         ReflectionTestUtils.setField(consultation, "rawText", "운동 목적과 경험을 확인했다.");
+        ReflectionTestUtils.setField(request, "customer", customer);
+        ReflectionTestUtils.setField(request, "consultation", consultation);
+
+        return request;
+    }
+
+    private ConsultationCreateRequest createRequest(
+            UUID serviceId,
+            UUID userId,
+            UUID inflowPathId,
+            ConsultationRegistrationStatus registrationStatus,
+            OffsetDateTime consultedAt
+    ) {
+        ConsultationCreateRequest request = new ConsultationCreateRequest();
+        ConsultationCreateRequest.CustomerInfo customer = new ConsultationCreateRequest.CustomerInfo();
+        ConsultationCreateRequest.ConsultationInfo consultation = new ConsultationCreateRequest.ConsultationInfo();
+
+        ReflectionTestUtils.setField(customer, "name", "김고객");
+        ReflectionTestUtils.setField(customer, "gender", Gender.FEMALE);
+        ReflectionTestUtils.setField(customer, "birthDate", LocalDate.of(1995, 1, 1));
+        ReflectionTestUtils.setField(customer, "phoneNum", "010-1234-5678");
+        ReflectionTestUtils.setField(customer, "preferredContactChannel", PreferredContactChannel.KAKAO);
+        ReflectionTestUtils.setField(customer, "inflowPathId", inflowPathId);
+        ReflectionTestUtils.setField(consultation, "consultedServiceId", serviceId);
+        ReflectionTestUtils.setField(consultation, "consultedAt", consultedAt);
+        ReflectionTestUtils.setField(consultation, "registrationStatus", registrationStatus);
+        ReflectionTestUtils.setField(consultation, "userId", userId);
+        ReflectionTestUtils.setField(consultation, "rawText", "상담 원문");
         ReflectionTestUtils.setField(request, "customer", customer);
         ReflectionTestUtils.setField(request, "consultation", consultation);
 
