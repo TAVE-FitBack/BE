@@ -13,6 +13,7 @@ import java.util.UUID;
 public class ConsultationNewResponse {
 
     private List<ServiceInfo> services;
+    private List<InflowPathInfo> inflowPaths;
     private List<CounselorInfo> counselors;
 
     @Getter
@@ -21,6 +22,15 @@ public class ConsultationNewResponse {
     public static class ServiceInfo {
         private UUID serviceId;
         private String name;
+    }
+
+    @Getter
+    @Builder
+    @AllArgsConstructor
+    public static class InflowPathInfo {
+        private UUID inflowPathId;
+        private String name;
+        private int displayOrder;
     }
 
     @Getter
