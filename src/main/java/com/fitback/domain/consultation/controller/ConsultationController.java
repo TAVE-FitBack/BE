@@ -33,7 +33,7 @@ public class ConsultationController {
     private final ConsultationService consultationService;
 
     @GetMapping("/new")
-    @Operation(summary = "상담 등록 초기 데이터 조회", description = "로그인 사용자의 매장 기준으로 활성 서비스 목록과 상담자 목록을 조회합니다.")
+    @Operation(summary = "상담 등록 초기 데이터 조회", description = "로그인 사용자의 매장 기준으로 활성 서비스 목록, 방문경로 옵션 목록, 상담자 목록을 조회합니다.")
     public ResponseEntity<ApiResponse<ConsultationNewResponse>> getNewConsultationData(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId
     ) {
