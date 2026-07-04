@@ -14,7 +14,11 @@ import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
@@ -35,6 +39,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -475,7 +481,440 @@ class ConsultationServiceTest {
 
         verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
         verify(customerRepository).findByPhoneNumAndStoreId("010-1234-5678", storeId);
+        verifyNoInteractions(interestServiceRepository);
         verifyNoMoreInteractions(customerRepository);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ConsultationRegistrationStatus.class, names = {"PENDING", "SCHEDULED", "LOST"})
+    @DisplayName("등록 완료가 아니면 확정 서비스 없이 고객을 저장하고 선택 서비스를 관심 서비스로 저장한다")
+    void createConsultationCreatesInterestServiceForNonRegisteredStatus(ConsultationRegistrationStatus registrationStatus) {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-06-30T14:00:00+09:00");
+        CustomerStatus expectedStatus = switch (registrationStatus) {
+            case PENDING -> CustomerStatus.PENDING;
+            case SCHEDULED -> CustomerStatus.SCHEDULED;
+            case LOST -> CustomerStatus.LOST;
+            case REGISTERED -> throw new IllegalArgumentException("REGISTERED is not part of this test");
+        };
+
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer savedCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .registeredService(null)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(expectedStatus)
+                .firstConsultAt(consultedAt.toLocalDate())
+                .latestConsultAt(consultedAt.toLocalDate())
+                .build();
+        Consultation savedConsultation = Consultation.builder()
+                .id(consultationId)
+                .customer(savedCustomer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(consultedAt)
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("상담 원문")
+                .build();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                registrationStatus,
+                consultedAt
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(customerRepository.findByPhoneNumAndStoreId("010-1234-5678", storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenReturn(savedCustomer);
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenReturn(savedConsultation);
+
+        ConsultationCreateResponse response = consultationService.createConsultation(storeId, request);
+
+        assertThat(response.getConsultationId()).isEqualTo(consultationId);
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getSessionNo()).isEqualTo(1);
+        assertThat(response.getRedirectUrl()).isEqualTo("/customers/" + customerId + "/detail");
+
+        ArgumentCaptor<Customer> customerCaptor = ArgumentCaptor.forClass(Customer.class);
+        ArgumentCaptor<InterestService> interestServiceCaptor = ArgumentCaptor.forClass(InterestService.class);
+        verify(customerRepository).save(customerCaptor.capture());
+        verify(interestServiceRepository).save(interestServiceCaptor.capture());
+
+        Customer customerToSave = customerCaptor.getValue();
+        assertThat(customerToSave.getStatus()).isEqualTo(expectedStatus);
+        assertThat(customerToSave.getRegisteredService()).isNull();
+
+        InterestService interestService = interestServiceCaptor.getValue();
+        assertThat(interestService.getCustomer()).isEqualTo(savedCustomer);
+        assertThat(interestService.getService()).isEqualTo(service);
+    }
+
+    @Test
+    @DisplayName("상담 등록 완료 시 고객 활동 타임라인을 저장한다")
+    void createConsultationCreatesTimeline() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-06-30T14:00:00+09:00");
+
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer savedCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .registeredService(service)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(CustomerStatus.REGISTERED)
+                .firstConsultAt(consultedAt.toLocalDate())
+                .latestConsultAt(consultedAt.toLocalDate())
+                .build();
+        Consultation savedConsultation = Consultation.builder()
+                .id(consultationId)
+                .customer(savedCustomer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(consultedAt)
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("상담 원문")
+                .build();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                ConsultationRegistrationStatus.REGISTERED,
+                consultedAt
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(customerRepository.findByPhoneNumAndStoreId("010-1234-5678", storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenReturn(savedCustomer);
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenReturn(savedConsultation);
+
+        consultationService.createConsultation(storeId, request);
+
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+
+        CustomerActivityTimeline timeline = timelineCaptor.getValue();
+        assertThat(timeline.getStore()).isEqualTo(store);
+        assertThat(timeline.getCustomer()).isEqualTo(savedCustomer);
+        assertThat(timeline.getActorUser()).isEqualTo(counselor);
+        assertThat(timeline.getActivityType()).isEqualTo(CustomerActivityType.CONSULTATION_CREATED);
+        assertThat(timeline.getTitle()).isEqualTo("상담 기록 등록");
+        assertThat(timeline.getDescription()).isEqualTo("고객의 최초 상담 기록이 등록되었습니다.");
+        assertThat(timeline.getRelatedType()).isEqualTo(ActivityRelatedType.CONSULTATION);
+        assertThat(timeline.getRelatedId()).isEqualTo(consultationId);
+        assertThat(timeline.getAfterValue()).containsEntry("consultationId", consultationId);
+        assertThat(timeline.getAfterValue()).containsEntry("sessionNo", 1);
+        assertThat(timeline.getAfterValue()).containsEntry("stage", ConsultationStage.CONSULTATION);
+        assertThat(timeline.getAfterValue()).containsEntry("sourceType", ConsultationSourceType.DIRECT);
+        assertThat(timeline.getAfterValue()).containsEntry("consultedServiceId", serviceId);
+        assertThat(timeline.getAfterValue()).containsEntry("customerStatus", CustomerStatus.REGISTERED);
+        assertThat(timeline.getOccurredAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("상담 등록 시 매장이 없으면 STORE_NOT_ASSIGNED 예외가 발생한다")
+    void createConsultationStoreNotAssigned() {
+        ConsultationCreateRequest request = createRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                ConsultationRegistrationStatus.REGISTERED,
+                OffsetDateTime.parse("2026-06-30T14:00:00+09:00")
+        );
+
+        assertThatThrownBy(() -> consultationService.createConsultation(null, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.STORE_NOT_ASSIGNED);
+
+        verifyNoInteractions(serviceRepository, userRepository, inflowPathOptionRepository, customerRepository);
+    }
+
+    @Test
+    @DisplayName("상담 등록 시 활성 서비스가 없으면 SERVICE_NOT_FOUND 예외가 발생한다")
+    void createConsultationServiceNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                ConsultationRegistrationStatus.REGISTERED,
+                OffsetDateTime.parse("2026-06-30T14:00:00+09:00")
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> consultationService.createConsultation(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.SERVICE_NOT_FOUND);
+
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verifyNoInteractions(userRepository, inflowPathOptionRepository, customerRepository, consultationRepository);
+    }
+
+    @Test
+    @DisplayName("상담 등록 시 상담자가 같은 매장에 없으면 COUNSELOR_NOT_FOUND 예외가 발생한다")
+    void createConsultationCounselorNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                UUID.randomUUID(),
+                ConsultationRegistrationStatus.REGISTERED,
+                OffsetDateTime.parse("2026-06-30T14:00:00+09:00")
+        );
+        Service service = Service.builder()
+                .id(serviceId)
+                .name("PT")
+                .active(true)
+                .build();
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> consultationService.createConsultation(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.COUNSELOR_NOT_FOUND);
+
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verify(userRepository).findByIdAndStore_Id(userId, storeId);
+        verifyNoInteractions(inflowPathOptionRepository, customerRepository, consultationRepository);
+    }
+
+    @Test
+    @DisplayName("상담 등록 시 활성 방문경로 옵션이 없으면 INFLOW_PATH_NOT_FOUND 예외가 발생한다")
+    void createConsultationInflowPathNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                ConsultationRegistrationStatus.REGISTERED,
+                OffsetDateTime.parse("2026-06-30T14:00:00+09:00")
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> consultationService.createConsultation(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.INFLOW_PATH_NOT_FOUND);
+
+        verify(inflowPathOptionRepository).findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId);
+        verifyNoInteractions(customerRepository, consultationRepository);
+    }
+
+    @Test
+    @DisplayName("상담 등록 시 같은 매장에 동일 연락처 고객이 있으면 DUPLICATE_CUSTOMER_PHONE 예외가 발생한다")
+    void createConsultationDuplicatePhone() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID existingCustomerId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-06-30T14:00:00+09:00");
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer existingCustomer = Customer.builder()
+                .id(existingCustomerId)
+                .store(store)
+                .name("기존고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(CustomerStatus.PENDING)
+                .firstConsultAt(consultedAt.toLocalDate())
+                .latestConsultAt(consultedAt.toLocalDate())
+                .build();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                ConsultationRegistrationStatus.REGISTERED,
+                consultedAt
+        );
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(customerRepository.findByPhoneNumAndStoreId("010-1234-5678", storeId))
+                .thenReturn(Optional.of(existingCustomer));
+
+        assertThatThrownBy(() -> consultationService.createConsultation(storeId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.DUPLICATE_CUSTOMER_PHONE);
+
+        verify(customerRepository).findByPhoneNumAndStoreId("010-1234-5678", storeId);
+        verifyNoMoreInteractions(customerRepository);
+        verifyNoInteractions(consultationRepository, customerActivityTimelineRepository, interestServiceRepository);
     }
 
     private ConsultationCheckPreviewRequest checkPreviewRequest(UUID serviceId) {

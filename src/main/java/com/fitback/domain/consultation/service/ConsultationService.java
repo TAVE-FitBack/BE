@@ -219,11 +219,10 @@ public class ConsultationService {
         }
 
         customer.markStatus(resolveInitialStatus(registrationStatus));
-        interestServiceRepository.findByCustomerIdAndServiceId(customer.getId(), service.getId())
-                .orElseGet(() -> interestServiceRepository.save(InterestService.builder()
-                        .customer(customer)
-                        .service(service)
-                        .build()));
+        interestServiceRepository.save(InterestService.builder()
+                .customer(customer)
+                .service(service)
+                .build());
     }
 
     private void validateDuplicatePhone(UUID storeId, ConsultationCreateRequest request) {
@@ -273,6 +272,7 @@ public class ConsultationService {
         afterValue.put("consultationId", consultation.getId());
         afterValue.put("sessionNo", consultation.getSessionNo());
         afterValue.put("stage", consultation.getStage());
+        afterValue.put("sourceType", consultation.getSourceType());
         afterValue.put("consultedServiceId", service.getId());
         afterValue.put("customerStatus", customer.getStatus());
 
@@ -282,7 +282,7 @@ public class ConsultationService {
                 .actorUser(counselor)
                 .activityType(CustomerActivityType.CONSULTATION_CREATED)
                 .title("상담 기록 등록")
-                .description("고객의 상담 기록이 등록되었습니다.")
+                .description("고객의 최초 상담 기록이 등록되었습니다.")
                 .relatedType(ActivityRelatedType.CONSULTATION)
                 .relatedId(consultation.getId())
                 .afterValue(afterValue)
