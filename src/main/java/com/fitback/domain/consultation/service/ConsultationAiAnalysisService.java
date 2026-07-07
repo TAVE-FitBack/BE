@@ -5,6 +5,7 @@ import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
+import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.CustomerAiInsight;
@@ -24,9 +25,12 @@ import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.store.entity.Store;
+import com.fitback.global.exception.BaseErrorCode;
+import com.fitback.global.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -46,22 +50,41 @@ public class ConsultationAiAnalysisService {
     private final FollowUpRepository followUpRepository;
     private final FollowUpAiInsightRepository followUpAiInsightRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
+    private final PlatformTransactionManager transactionManager;
 
-    @Transactional
     public void analyzeConsultation(UUID consultationId) {
         if (consultationId == null) {
             log.warn("AI consultation analysis skipped. consultationId is null");
             return;
         }
 
-        consultationRepository.findById(consultationId)
-                .ifPresentOrElse(
-                        this::prepareAnalysisRequest,
-                        () -> log.warn("AI consultation analysis skipped. consultation not found. consultationId={}", consultationId)
-                );
+        try {
+            AiConsultationAnalyzeRequest request = loadAnalysisRequest(consultationId);
+            if (request == null) {
+                return;
+            }
+            AiConsultationAnalyzeResponse response = aiConsultationClient.analyzeConsultation(request);
+            saveAnalysisSuccess(consultationId, response);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "AI consultation analysis failed. consultationId={}, status=FAILED",
+                    consultationId,
+                    e
+            );
+            saveAnalysisFailure(consultationId, e);
+        }
     }
 
-    private void prepareAnalysisRequest(Consultation consultation) {
+    private AiConsultationAnalyzeRequest loadAnalysisRequest(UUID consultationId) {
+        return transactionTemplate().execute(status -> consultationRepository.findById(consultationId)
+                .map(this::prepareAnalysisRequest)
+                .orElseGet(() -> {
+                    log.warn("AI consultation analysis skipped. consultation not found. consultationId={}", consultationId);
+                    return null;
+                }));
+    }
+
+    private AiConsultationAnalyzeRequest prepareAnalysisRequest(Consultation consultation) {
         try {
             AiConsultationAnalyzeRequest request = buildAnalyzeRequest(consultation);
             log.debug(
@@ -70,15 +93,15 @@ public class ConsultationAiAnalysisService {
                     request.getCustomer().getCustomerId(),
                     request.getService().getServiceId()
             );
-            AiConsultationAnalyzeResponse response = aiConsultationClient.analyzeConsultation(request);
-            saveAnalysisSuccess(consultation, response);
+            return request;
         } catch (RuntimeException e) {
-            consultation.markAiAnalysisFailed();
+            saveAnalysisFailure(consultation, e, OffsetDateTime.now());
             log.warn(
                     "AI consultation analysis target invalid. consultationId={}, status=FAILED",
                     consultation.getId(),
                     e
             );
+            return null;
         }
     }
 
@@ -123,18 +146,79 @@ public class ConsultationAiAnalysisService {
                 .build();
     }
 
-    private void saveAnalysisSuccess(Consultation consultation, AiConsultationAnalyzeResponse response) {
-        OffsetDateTime now = OffsetDateTime.now();
-        Customer customer = consultation.getCustomer();
+    private void saveAnalysisSuccess(UUID consultationId, AiConsultationAnalyzeResponse response) {
+        transactionTemplate().executeWithoutResult(status -> {
+            Consultation consultation = consultationRepository.findById(consultationId)
+                    .orElseThrow(() -> new IllegalStateException("consultation not found during AI analysis save"));
+            OffsetDateTime now = OffsetDateTime.now();
+            Customer customer = consultation.getCustomer();
 
-        consultation.completeAiAnalysis(response.getSummary(), now);
-        upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
-        replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
+            consultation.completeAiAnalysis(response.getSummary(), now);
+            upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
+            replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
 
-        FollowUp followUp = replaceActiveFollowUp(customer, consultation, response);
-        saveFollowUpAiInsight(followUp, response, now);
-        saveAiAnalysisCompletedTimeline(consultation, response, followUp, now);
-        saveNextActionCreatedTimeline(consultation, followUp, response, now);
+            FollowUp followUp = replaceActiveFollowUp(customer, consultation, response);
+            saveFollowUpAiInsight(followUp, response, now);
+            saveAiAnalysisCompletedTimeline(consultation, response, followUp, now);
+            saveNextActionCreatedTimeline(consultation, followUp, response, now);
+        });
+    }
+
+    private void saveAnalysisFailure(UUID consultationId, RuntimeException cause) {
+        try {
+            transactionTemplate().executeWithoutResult(status -> consultationRepository.findById(consultationId)
+                    .ifPresentOrElse(
+                            consultation -> saveAnalysisFailure(consultation, cause, OffsetDateTime.now()),
+                            () -> log.warn("AI consultation analysis failure status skipped. consultation not found. consultationId={}", consultationId)
+                    ));
+        } catch (RuntimeException failureSaveException) {
+            log.error(
+                    "AI consultation analysis failure status save failed. consultationId={}",
+                    consultationId,
+                    failureSaveException
+            );
+        }
+    }
+
+    private void saveAnalysisFailure(Consultation consultation, RuntimeException cause, OffsetDateTime occurredAt) {
+        consultation.markAiAnalysisFailed();
+
+        if (!canWriteTimeline(consultation)) {
+            return;
+        }
+
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("status", "FAILED");
+        afterValue.put("errorCode", resolveErrorCode(cause));
+
+        customerActivityTimelineRepository.save(CustomerActivityTimeline.builder()
+                .store(consultation.getCustomer().getStore())
+                .customer(consultation.getCustomer())
+                .actorUser(consultation.getUser())
+                .activityType(CustomerActivityType.AI_ANALYSIS_FAILED)
+                .title("AI 분석에 실패했습니다.")
+                .description("AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도할 수 있습니다.")
+                .relatedType(ActivityRelatedType.CONSULTATION)
+                .relatedId(consultation.getId())
+                .afterValue(afterValue)
+                .occurredAt(occurredAt)
+                .build());
+    }
+
+    private boolean canWriteTimeline(Consultation consultation) {
+        return consultation.getCustomer() != null
+                && consultation.getCustomer().getStore() != null
+                && consultation.getUser() != null;
+    }
+
+    private String resolveErrorCode(RuntimeException cause) {
+        if (cause instanceof BusinessException businessException) {
+            BaseErrorCode errorCode = businessException.getErrorCode();
+            if (errorCode instanceof Enum<?> enumErrorCode) {
+                return enumErrorCode.name();
+            }
+        }
+        return ConsultationErrorCode.AI_ANALYSIS_FAILED.name();
     }
 
     private void upsertCustomerAiInsight(
@@ -322,5 +406,9 @@ public class ConsultationAiAnalysisService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private TransactionTemplate transactionTemplate() {
+        return new TransactionTemplate(transactionManager);
     }
 }
