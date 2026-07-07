@@ -1,5 +1,6 @@
 package com.fitback.domain.consultation.entity;
 
+import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.customer.entity.Customer;
@@ -57,6 +58,11 @@ public class Consultation extends BaseTimeEntity {
 
     @Column(columnDefinition = "text")
     private String summary;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ai_analysis_status", nullable = false, length = 20)
+    private AiAnalysisStatus aiAnalysisStatus = AiAnalysisStatus.PROCESSING;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source_type", nullable = false, length = 10)
