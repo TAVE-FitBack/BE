@@ -46,4 +46,11 @@ public class CustomerAiInsight extends BaseTimeEntity {
 
     @Column(name = "analyzed_at")
     private OffsetDateTime analyzedAt;
+
+    public void updateAnalysis(String leadTemperature, String temperatureBasis, Integer priorityScore, OffsetDateTime analyzedAt) {
+        this.leadTemperature = leadTemperature;
+        this.temperatureBasis = temperatureBasis;
+        this.priorityScore = priorityScore;
+        this.analyzedAt = analyzedAt;
+    }
 }

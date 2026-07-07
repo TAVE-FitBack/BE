@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface NonConversionReasonRepository extends JpaRepository<NonConversionReason, UUID> {
 
     List<NonConversionReason> findAllByCustomerIdOrderByUpdatedAtDesc(UUID customerId);
+
+    void deleteAllByCustomerId(UUID customerId);
 }
