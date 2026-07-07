@@ -9,7 +9,6 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.util.UUID;
-
 @Getter
 @NoArgsConstructor
 public class ConsultationCheckPreviewRequest {
@@ -26,15 +25,16 @@ public class ConsultationCheckPreviewRequest {
     @NoArgsConstructor
     public static class CustomerInfo {
 
-        private UUID customerId;
-
         @NotBlank(message = "고객 이름은 필수입니다.")
         private String name;
 
+        @NotNull(message = "성별은 필수입니다.")
         private Gender gender;
 
+        @NotNull(message = "생년월일은 필수입니다.")
         private LocalDate birthDate;
 
+        @NotBlank(message = "연락처는 필수입니다.")
         private String phoneNum;
     }
 

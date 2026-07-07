@@ -2,7 +2,6 @@ package com.fitback.domain.customer.entity;
 
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
-import com.fitback.domain.customer.enums.InflowPath;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.store.entity.Store;
@@ -38,22 +37,22 @@ public class Customer extends BaseTimeEntity {
     private String name;
 
     @Enumerated(EnumType.STRING)
-    @Column(length = 10)
+    @Column(nullable = false, length = 10)
     private Gender gender;
 
-    @Column(name = "birth_date")
+    @Column(name = "birth_date", nullable = false)
     private LocalDate birthDate;
 
-    @Column(name = "phone_num", length = 20)
+    @Column(name = "phone_num", nullable = false, length = 20)
     private String phoneNum;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "preferred_contact_channel", length = 30)
+    @Column(name = "preferred_contact_channel", nullable = false, length = 30)
     private PreferredContactChannel preferredContactChannel;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "inflow_path", length = 30)
-    private InflowPath inflowPath;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "inflow_path_id", nullable = false)
+    private InflowPathOption inflowPathOption;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -65,30 +64,13 @@ public class Customer extends BaseTimeEntity {
     @Column(name = "latest_consult_at", nullable = false)
     private LocalDate latestConsultAt;
 
-    public void updateBasicInfo(
-            String name,
-            Gender gender,
-            LocalDate birthDate,
-            String phoneNum,
-            PreferredContactChannel preferredContactChannel,
-            InflowPath inflowPath,
-            LocalDate latestConsultAt
-    ) {
-        this.name = name;
-        this.gender = gender;
-        this.birthDate = birthDate;
-        this.phoneNum = phoneNum;
-        this.preferredContactChannel = preferredContactChannel;
-        this.inflowPath = inflowPath;
-        this.latestConsultAt = latestConsultAt;
-    }
-
     public void markRegistered(Service registeredService) {
         this.registeredService = registeredService;
         this.status = CustomerStatus.REGISTERED;
     }
 
-    public void markUnregistered() {
-        this.status = CustomerStatus.UNREGISTERED;
+    public void markStatus(CustomerStatus status) {
+        this.status = status;
+        this.registeredService = null;
     }
 }

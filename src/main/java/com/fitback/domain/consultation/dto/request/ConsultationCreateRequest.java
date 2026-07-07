@@ -1,7 +1,7 @@
 package com.fitback.domain.consultation.dto.request;
 
+import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.customer.enums.Gender;
-import com.fitback.domain.customer.enums.InflowPath;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -16,8 +16,6 @@ import java.util.UUID;
 @Getter
 @NoArgsConstructor
 public class ConsultationCreateRequest {
-
-    private UUID customerId;
 
     @Valid
     @NotNull(message = "고객 정보는 필수입니다.")
@@ -34,16 +32,20 @@ public class ConsultationCreateRequest {
         @NotBlank(message = "고객 이름은 필수입니다.")
         private String name;
 
+        @NotNull(message = "성별은 필수입니다.")
         private Gender gender;
 
+        @NotNull(message = "생년월일은 필수입니다.")
         private LocalDate birthDate;
 
         @NotBlank(message = "연락처는 필수입니다.")
         private String phoneNum;
 
+        @NotNull(message = "연락 가능 채널은 필수입니다.")
         private PreferredContactChannel preferredContactChannel;
 
-        private InflowPath inflowPath;
+        @NotNull(message = "방문경로는 필수입니다.")
+        private UUID inflowPathId;
     }
 
     @Getter
@@ -56,8 +58,8 @@ public class ConsultationCreateRequest {
         @NotNull(message = "방문/상담 일시는 필수입니다.")
         private OffsetDateTime consultedAt;
 
-        @NotNull(message = "등록 여부는 필수입니다.")
-        private Boolean isRegistered;
+        @NotNull(message = "등록 상태는 필수입니다.")
+        private ConsultationRegistrationStatus registrationStatus;
 
         @NotNull(message = "상담자는 필수입니다.")
         private UUID userId;

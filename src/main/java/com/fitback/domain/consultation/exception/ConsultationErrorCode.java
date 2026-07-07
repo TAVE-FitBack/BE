@@ -13,6 +13,10 @@ public enum ConsultationErrorCode implements BaseErrorCode {
             HttpStatus.NOT_FOUND,
             "선택한 서비스를 찾을 수 없습니다."
     ),
+    INFLOW_PATH_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "선택한 방문경로를 찾을 수 없습니다."
+    ),
     CUSTOMER_NOT_FOUND(
             HttpStatus.NOT_FOUND,
             "고객 정보를 찾을 수 없습니다."

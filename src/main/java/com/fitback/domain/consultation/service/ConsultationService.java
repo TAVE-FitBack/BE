@@ -8,19 +8,21 @@ import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
+import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.InterestService;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.CustomerActivityType;
-import com.fitback.domain.customer.enums.InflowPath;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
@@ -47,6 +49,7 @@ public class ConsultationService {
     private final ServiceRepository serviceRepository;
     private final UserRepository userRepository;
     private final CustomerRepository customerRepository;
+    private final InflowPathOptionRepository inflowPathOptionRepository;
     private final InterestServiceRepository interestServiceRepository;
     private final ConsultationRepository consultationRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
@@ -75,8 +78,19 @@ public class ConsultationService {
                         .build())
                 .toList();
 
+        List<ConsultationNewResponse.InflowPathInfo> inflowPaths = inflowPathOptionRepository
+                .findAllByStoreIdAndActiveTrueOrderByDisplayOrderAsc(storeId)
+                .stream()
+                .map(inflowPath -> ConsultationNewResponse.InflowPathInfo.builder()
+                        .inflowPathId(inflowPath.getId())
+                        .name(inflowPath.getName())
+                        .displayOrder(inflowPath.getDisplayOrder())
+                        .build())
+                .toList();
+
         return ConsultationNewResponse.builder()
                 .services(services)
+                .inflowPaths(inflowPaths)
                 .counselors(counselors)
                 .build();
     }
@@ -87,7 +101,7 @@ public class ConsultationService {
         }
 
         Service service = serviceRepository
-                .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
+                .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
         AiCheckPreviewRequest aiRequest = AiCheckPreviewRequest.builder()
@@ -110,17 +124,21 @@ public class ConsultationService {
         }
 
         Service service = serviceRepository
-                .findByIdAndStoreId(request.getConsultation().getConsultedServiceId(), storeId)
+                .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
         User counselor = userRepository
                 .findByIdAndStore_Id(request.getConsultation().getUserId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.COUNSELOR_NOT_FOUND));
 
+        InflowPathOption inflowPathOption = inflowPathOptionRepository
+                .findByIdAndStoreIdAndActiveTrue(request.getCustomer().getInflowPathId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.INFLOW_PATH_NOT_FOUND));
+
         validateDuplicatePhone(storeId, request);
 
-        Customer customer = saveCustomerForConsultation(storeId, counselor, service, request);
-        applyRegistrationStatus(customer, service, request.getConsultation().getIsRegistered());
+        Customer customer = saveCustomerForConsultation(counselor, service, inflowPathOption, request);
+        applyRegistrationStatus(customer, service, request.getConsultation().getRegistrationStatus());
         Consultation consultation = saveConsultation(customer, counselor, service, request);
         saveConsultationCreatedTimeline(customer, counselor, service, consultation);
 
@@ -162,86 +180,66 @@ public class ConsultationService {
                         .registeredServiceId(registeredServiceId)
                         .status(customer.getStatus())
                         .preferredContactChannel(customer.getPreferredContactChannel())
-                        .inflowPath(customer.getInflowPath())
+                        .inflowPathId(customer.getInflowPathOption().getId())
                         .latestConsultAt(customer.getLatestConsultAt())
                         .build())
+                .redirectUrl("/customers/" + customer.getId() + "/detail")
                 .build();
     }
 
     private Customer saveCustomerForConsultation(
-            UUID storeId,
             User counselor,
             Service service,
+            InflowPathOption inflowPathOption,
             ConsultationCreateRequest request
     ) {
         LocalDate consultedDate = request.getConsultation().getConsultedAt().toLocalDate();
 
-        if (request.getCustomerId() == null) {
-            Customer customer = Customer.builder()
-                    .store(counselor.getStore())
-                    .name(request.getCustomer().getName())
-                    .gender(request.getCustomer().getGender())
-                    .birthDate(request.getCustomer().getBirthDate())
-                    .phoneNum(request.getCustomer().getPhoneNum())
-                    .preferredContactChannel(request.getCustomer().getPreferredContactChannel())
-                    .inflowPath(resolveInflowPath(request.getCustomer().getInflowPath()))
-                    .status(resolveInitialStatus(request.getConsultation().getIsRegistered()))
-                    .registeredService(request.getConsultation().getIsRegistered() ? service : null)
-                    .firstConsultAt(consultedDate)
-                    .latestConsultAt(consultedDate)
-                    .build();
+        Customer customer = Customer.builder()
+                .store(counselor.getStore())
+                .name(request.getCustomer().getName())
+                .gender(request.getCustomer().getGender())
+                .birthDate(request.getCustomer().getBirthDate())
+                .phoneNum(request.getCustomer().getPhoneNum())
+                .preferredContactChannel(request.getCustomer().getPreferredContactChannel())
+                .inflowPathOption(inflowPathOption)
+                .status(resolveInitialStatus(request.getConsultation().getRegistrationStatus()))
+                .registeredService(request.getConsultation().getRegistrationStatus() == ConsultationRegistrationStatus.REGISTERED ? service : null)
+                .firstConsultAt(consultedDate)
+                .latestConsultAt(consultedDate)
+                .build();
 
-            return customerRepository.save(customer);
-        }
-
-        Customer customer = customerRepository
-                .findByIdAndStoreId(request.getCustomerId(), storeId)
-                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CUSTOMER_NOT_FOUND));
-
-        customer.updateBasicInfo(
-                request.getCustomer().getName(),
-                request.getCustomer().getGender(),
-                request.getCustomer().getBirthDate(),
-                request.getCustomer().getPhoneNum(),
-                request.getCustomer().getPreferredContactChannel(),
-                resolveInflowPath(request.getCustomer().getInflowPath()),
-                consultedDate
-        );
-
-        return customer;
+        return customerRepository.save(customer);
     }
 
-    private void applyRegistrationStatus(Customer customer, Service service, boolean registered) {
-        if (registered) {
+    private void applyRegistrationStatus(Customer customer, Service service, ConsultationRegistrationStatus registrationStatus) {
+        if (registrationStatus == ConsultationRegistrationStatus.REGISTERED) {
             customer.markRegistered(service);
             return;
         }
 
-        customer.markUnregistered();
-        interestServiceRepository.findByCustomerIdAndServiceId(customer.getId(), service.getId())
-                .orElseGet(() -> interestServiceRepository.save(InterestService.builder()
-                        .customer(customer)
-                        .service(service)
-                        .build()));
+        customer.markStatus(resolveInitialStatus(registrationStatus));
+        interestServiceRepository.save(InterestService.builder()
+                .customer(customer)
+                .service(service)
+                .build());
     }
 
     private void validateDuplicatePhone(UUID storeId, ConsultationCreateRequest request) {
         String phoneNum = request.getCustomer().getPhoneNum();
 
-        if (request.getCustomerId() == null) {
-            if (customerRepository.findByPhoneNumAndStoreId(phoneNum, storeId).isPresent()) {
-                throw new BusinessException(ConsultationErrorCode.DUPLICATE_CUSTOMER_PHONE);
-            }
-            return;
-        }
-
-        if (customerRepository.existsByPhoneNumAndStoreIdAndIdNot(phoneNum, storeId, request.getCustomerId())) {
+        if (customerRepository.findByPhoneNumAndStoreId(phoneNum, storeId).isPresent()) {
             throw new BusinessException(ConsultationErrorCode.DUPLICATE_CUSTOMER_PHONE);
         }
     }
 
-    private CustomerStatus resolveInitialStatus(boolean registered) {
-        return registered ? CustomerStatus.REGISTERED : CustomerStatus.UNREGISTERED;
+    private CustomerStatus resolveInitialStatus(ConsultationRegistrationStatus registrationStatus) {
+        return switch (registrationStatus) {
+            case REGISTERED -> CustomerStatus.REGISTERED;
+            case PENDING -> CustomerStatus.PENDING;
+            case SCHEDULED -> CustomerStatus.SCHEDULED;
+            case LOST -> CustomerStatus.LOST;
+        };
     }
 
     private Consultation saveConsultation(
@@ -250,14 +248,12 @@ public class ConsultationService {
             Service service,
             ConsultationCreateRequest request
     ) {
-        int nextSessionNo = consultationRepository.findMaxSessionNoByCustomerId(customer.getId()) + 1;
-
         Consultation consultation = Consultation.builder()
                 .customer(customer)
                 .user(counselor)
                 .consultedService(service)
                 .consultedAt(request.getConsultation().getConsultedAt())
-                .sessionNo(nextSessionNo)
+                .sessionNo(1)
                 .stage(ConsultationStage.CONSULTATION)
                 .sourceType(ConsultationSourceType.DIRECT)
                 .rawText(request.getConsultation().getRawText())
@@ -276,6 +272,7 @@ public class ConsultationService {
         afterValue.put("consultationId", consultation.getId());
         afterValue.put("sessionNo", consultation.getSessionNo());
         afterValue.put("stage", consultation.getStage());
+        afterValue.put("sourceType", consultation.getSourceType());
         afterValue.put("consultedServiceId", service.getId());
         afterValue.put("customerStatus", customer.getStatus());
 
@@ -285,7 +282,7 @@ public class ConsultationService {
                 .actorUser(counselor)
                 .activityType(CustomerActivityType.CONSULTATION_CREATED)
                 .title("상담 기록 등록")
-                .description("고객의 상담 기록이 등록되었습니다.")
+                .description("고객의 최초 상담 기록이 등록되었습니다.")
                 .relatedType(ActivityRelatedType.CONSULTATION)
                 .relatedId(consultation.getId())
                 .afterValue(afterValue)
@@ -296,10 +293,6 @@ public class ConsultationService {
     }
 
     private String buildConsultationRedirectUrl(UUID customerId, UUID consultationId) {
-        return "/customers/" + customerId + "/consultations/" + consultationId;
-    }
-
-    private InflowPath resolveInflowPath(InflowPath inflowPath) {
-        return inflowPath != null ? inflowPath : InflowPath.OTHER;
+        return "/customers/" + customerId + "/detail";
     }
 }
