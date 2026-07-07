@@ -188,6 +188,7 @@ class CustomerServiceTest {
         assertThat(response.getNonConversionReasons().get(0).getReasonType()).isEqualTo("PRICE_BURDEN");
         assertThat(response.getActiveFollowUp().getFollowUpId()).isEqualTo(followUp.getId());
         assertThat(response.getNextBestAction().getTitle()).isEqualTo("부담 적은 시작 옵션 제안");
+        assertThat(response.getNextBestAction().getDescription()).isEqualTo("큰 패키지보다 시작 부담이 낮은 옵션을 안내합니다.");
         assertThat(response.getNextBestAction().getPersuasionPoint()).containsEntry("main", "초기 비용 부담 완화");
         assertThat(response.getLatestMessageTemplate().getMessageTemplateId()).isEqualTo(messageTemplate.getId());
         assertThat(response.getTimeline()).hasSize(1);
@@ -307,6 +308,45 @@ class CustomerServiceTest {
         assertThat(response.getNextBestAction()).isNull();
         assertThat(response.getLatestMessageTemplate()).isNull();
         assertThat(response.getTimeline()).isEmpty();
+        verifyNoInteractions(followUpAiInsightRepository, messageTemplateRepository);
+    }
+
+    @Test
+    @DisplayName("AI 분석이 FAILED이면 실패 상태와 빈 AI 결과를 반환한다")
+    void getCustomerDetailFailedReturnsFailedStatusAndEmptyAiValues() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation consultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                user(UUID.randomUUID(), store, "상담자"),
+                service(UUID.randomUUID(), store, "PT"),
+                1,
+                AiAnalysisStatus.FAILED
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(consultation));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.empty());
+        when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
+                .thenReturn(List.of());
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(storeId, customerId);
+
+        assertThat(response.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        assertThat(response.getLatestConsultation().getSummary()).isNull();
+        assertThat(response.getAiInsight()).isNull();
+        assertThat(response.getNonConversionReasons()).isEmpty();
+        assertThat(response.getActiveFollowUp()).isNull();
+        assertThat(response.getNextBestAction()).isNull();
+        assertThat(response.getLatestMessageTemplate()).isNull();
         verifyNoInteractions(followUpAiInsightRepository, messageTemplateRepository);
     }
 
