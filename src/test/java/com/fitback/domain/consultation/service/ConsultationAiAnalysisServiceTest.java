@@ -7,6 +7,7 @@ import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -30,6 +31,7 @@ import com.fitback.domain.store.entity.Store;
 import com.fitback.domain.store.enums.StoreType;
 import com.fitback.domain.user.entity.User;
 import com.fitback.domain.user.enums.UserRole;
+import com.fitback.global.exception.BusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -48,6 +53,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -75,10 +82,15 @@ class ConsultationAiAnalysisServiceTest {
     @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
     private ConsultationAiAnalysisService consultationAiAnalysisService;
 
     @BeforeEach
     void setUp() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+                .thenAnswer(invocation -> new SimpleTransactionStatus());
         consultationAiAnalysisService = new ConsultationAiAnalysisService(
                 consultationRepository,
                 aiConsultationClient,
@@ -86,7 +98,8 @@ class ConsultationAiAnalysisServiceTest {
                 nonConversionReasonRepository,
                 followUpRepository,
                 followUpAiInsightRepository,
-                customerActivityTimelineRepository
+                customerActivityTimelineRepository,
+                transactionManager
         );
     }
 
@@ -156,7 +169,7 @@ class ConsultationAiAnalysisServiceTest {
                 .extracting(CustomerActivityTimeline::getActivityType)
                 .containsExactly(CustomerActivityType.AI_ANALYSIS_COMPLETED, CustomerActivityType.NEXT_ACTION_CREATED);
 
-        verify(consultationRepository).findById(consultationId);
+        verify(consultationRepository, org.mockito.Mockito.times(2)).findById(consultationId);
     }
 
     @Test
@@ -204,11 +217,11 @@ class ConsultationAiAnalysisServiceTest {
         consultationAiAnalysisService.analyzeConsultation(consultationId);
 
         verify(consultationRepository).findById(consultationId);
-        verifyNoMoreInteractions(consultationRepository);
+        verifyNoInteractions(aiConsultationClient, customerActivityTimelineRepository);
     }
 
     @Test
-    @DisplayName("고객 조회가 불가능하면 상담 AI 분석 상태를 FAILED로 변경한다")
+    @DisplayName("고객 조회가 불가능하면 상담 AI 분석 상태를 FAILED로 변경하고 성공 계열 데이터는 생성하지 않는다")
     void analyzeConsultationMarksFailedWhenCustomerMissing() {
         UUID consultationId = UUID.randomUUID();
         Consultation consultation = consultation(consultationId, null, service(), AiAnalysisStatus.PROCESSING);
@@ -219,6 +232,8 @@ class ConsultationAiAnalysisServiceTest {
 
         assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
         verify(consultationRepository).findById(consultationId);
+        verifyNoInteractions(aiConsultationClient);
+        verifyNoSuccessResultSaved();
     }
 
     @Test
@@ -233,6 +248,61 @@ class ConsultationAiAnalysisServiceTest {
 
         assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
         verify(consultationRepository).findById(consultationId);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue()).containsEntry("status", "FAILED");
+        verifyNoInteractions(aiConsultationClient);
+        verifyNoSuccessResultSaved();
+    }
+
+    @Test
+    @DisplayName("FastAPI 호출 실패 시 FAILED 상태와 실패 타임라인만 저장한다")
+    void analyzeConsultationMarksFailedWhenAiRequestFails() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_ANALYSIS_REQUEST_FAILED));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue())
+                .containsEntry("status", "FAILED")
+                .containsEntry("errorCode", "AI_ANALYSIS_REQUEST_FAILED");
+        verifyNoSuccessResultSaved();
+    }
+
+    @Test
+    @DisplayName("AI 결과 저장 실패 시 성공 저장은 롤백되고 FAILED 상태와 실패 타임라인만 남긴다")
+    void analyzeConsultationMarksFailedWhenSaveFails() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        AiConsultationAnalyzeResponse aiResponse = aiResponse();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse);
+        when(customerAiInsightRepository.findById(consultation.getCustomer().getId())).thenReturn(Optional.empty());
+        when(customerAiInsightRepository.save(any(CustomerAiInsight.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_ANALYSIS_SAVE_FAILED));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue())
+                .containsEntry("status", "FAILED")
+                .containsEntry("errorCode", "AI_ANALYSIS_SAVE_FAILED");
+        verify(nonConversionReasonRepository, never()).saveAll(any());
+        verify(followUpRepository, never()).save(any());
+        verify(followUpAiInsightRepository, never()).save(any());
     }
 
     @Test
@@ -336,6 +406,14 @@ class ConsultationAiAnalysisServiceTest {
                 .displayOrder(1)
                 .active(true)
                 .build();
+    }
+
+    private void verifyNoSuccessResultSaved() {
+        verify(customerAiInsightRepository, never()).save(any());
+        verify(nonConversionReasonRepository, never()).deleteAllByCustomerId(any());
+        verify(nonConversionReasonRepository, never()).saveAll(any());
+        verify(followUpRepository, never()).save(any());
+        verify(followUpAiInsightRepository, never()).save(any());
     }
 
     private AiConsultationAnalyzeResponse aiResponse() {
