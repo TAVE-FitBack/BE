@@ -1,6 +1,7 @@
 package com.fitback.global.exception;
 
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.inquiry.exception.InquiryErrorCode;
 import com.fitback.global.response.ApiResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -109,7 +110,17 @@ class GlobalExceptionHandlerTest {
         assertBusinessError(ConsultationErrorCode.AI_CHECK_FAILED, HttpStatus.BAD_GATEWAY);
     }
 
-    private void assertBusinessError(ConsultationErrorCode errorCode, HttpStatus status) {
+    @Test
+    @DisplayName("문의 도메인 BusinessException은 문서의 에러코드와 HTTP 상태로 반환한다")
+    void inquiryBusinessErrors() {
+        assertBusinessError(InquiryErrorCode.STORE_NOT_ASSIGNED, HttpStatus.BAD_REQUEST);
+        assertBusinessError(InquiryErrorCode.SERVICE_NOT_FOUND, HttpStatus.NOT_FOUND);
+        assertBusinessError(InquiryErrorCode.INFLOW_PATH_NOT_FOUND, HttpStatus.NOT_FOUND);
+        assertBusinessError(InquiryErrorCode.COUNSELOR_NOT_FOUND, HttpStatus.NOT_FOUND);
+        assertBusinessError(InquiryErrorCode.AI_CHECK_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+
+    private void assertBusinessError(BaseErrorCode errorCode, HttpStatus status) {
         ResponseEntity<ApiResponse<Void>> response = handler.handleBusinessException(new BusinessException(errorCode));
 
         assertThat(response.getStatusCode()).isEqualTo(status);
