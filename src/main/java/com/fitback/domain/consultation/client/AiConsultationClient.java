@@ -1,15 +1,22 @@
 package com.fitback.domain.consultation.client;
 
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
+import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.global.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.converter.HttpMessageConversionException;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.client.ResourceAccessException;
 
+import java.time.Duration;
 import java.util.Map;
 
 @Slf4j
@@ -17,12 +24,22 @@ import java.util.Map;
 public class AiConsultationClient {
 
     private static final String CHECK_PREVIEW_PATH = "/ai/v1/consultations/check-preview";
+    private static final String ANALYZE_PATH = "/ai/v1/consultations/analyze";
 
     private final RestClient restClient;
 
-    public AiConsultationClient(@Value("${ai.base-url:http://localhost:8000}") String aiBaseUrl) {
+    public AiConsultationClient(
+            @Value("${ai.base-url:http://localhost:8000}") String aiBaseUrl,
+            @Value("${ai.connect-timeout-ms:3000}") long connectTimeoutMs,
+            @Value("${ai.read-timeout-ms:30000}") long readTimeoutMs
+    ) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+
         this.restClient = RestClient.builder()
                 .baseUrl(aiBaseUrl)
+                .requestFactory(requestFactory)
                 .build();
     }
 
@@ -38,5 +55,49 @@ public class AiConsultationClient {
             log.warn("AI check-preview request failed", e);
             throw new BusinessException(ConsultationErrorCode.AI_CHECK_FAILED);
         }
+    }
+
+    public AiConsultationAnalyzeResponse analyzeConsultation(AiConsultationAnalyzeRequest request) {
+        try {
+            AiConsultationAnalyzeResponse response = restClient.post()
+                    .uri(ANALYZE_PATH)
+                    .body(request)
+                    .retrieve()
+                    .body(AiConsultationAnalyzeResponse.class);
+            validateAnalyzeResponse(response);
+            return response;
+        } catch (ResourceAccessException e) {
+            log.warn("AI consultation analyze request failed", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_REQUEST_FAILED);
+        } catch (RestClientResponseException e) {
+            log.warn("AI consultation analyze returned error status. status={}", e.getStatusCode(), e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_FAILED);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (HttpMessageConversionException e) {
+            log.warn("AI consultation analyze response parsing failed", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        } catch (RestClientException | IllegalArgumentException e) {
+            log.warn("AI consultation analyze response invalid", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        }
+    }
+
+    private void validateAnalyzeResponse(AiConsultationAnalyzeResponse response) {
+        if (response == null
+                || !hasText(response.getSummary())
+                || response.getCustomerInsight() == null
+                || !hasText(response.getCustomerInsight().getLeadTemperature())
+                || response.getNextBestAction() == null
+                || !hasText(response.getNextBestAction().getTitle())
+                || !hasText(response.getNextBestAction().getDescription())
+                || response.getFollowUp() == null
+                || response.getFollowUp().getRecommendContactDate() == null) {
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

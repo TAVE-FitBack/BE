@@ -36,6 +36,22 @@ public enum ConsultationErrorCode implements BaseErrorCode {
     AI_CHECK_FAILED(
             HttpStatus.BAD_GATEWAY,
             "AI 중간 점검 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+    ),
+    AI_ANALYSIS_REQUEST_FAILED(
+            HttpStatus.BAD_GATEWAY,
+            "AI 분석 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."
+    ),
+    AI_ANALYSIS_RESPONSE_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "AI 분석 응답 형식이 올바르지 않습니다."
+    ),
+    AI_ANALYSIS_FAILED(
+            HttpStatus.BAD_GATEWAY,
+            "AI 분석 중 오류가 발생했습니다."
+    ),
+    AI_ANALYSIS_SAVE_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "AI 분석 결과 저장 중 오류가 발생했습니다."
     );
 
     private final HttpStatus httpStatus;
