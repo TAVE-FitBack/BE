@@ -11,6 +11,7 @@ import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
@@ -46,6 +47,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -90,6 +92,9 @@ class ConsultationServiceTest {
     @Mock
     private AiConsultationClient aiConsultationClient;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private ConsultationService consultationService;
 
     @BeforeEach
@@ -102,7 +107,8 @@ class ConsultationServiceTest {
                 interestServiceRepository,
                 consultationRepository,
                 customerActivityTimelineRepository,
-                aiConsultationClient
+                aiConsultationClient,
+                eventPublisher
         );
     }
 
@@ -483,6 +489,9 @@ class ConsultationServiceTest {
 
         verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
         verify(customerRepository).findByPhoneNumAndStoreId("010-1234-5678", storeId);
+        ArgumentCaptor<ConsultationCreatedEvent> eventCaptor = ArgumentCaptor.forClass(ConsultationCreatedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().consultationId()).isEqualTo(consultationId);
         verifyNoInteractions(interestServiceRepository);
         verifyNoMoreInteractions(customerRepository);
     }

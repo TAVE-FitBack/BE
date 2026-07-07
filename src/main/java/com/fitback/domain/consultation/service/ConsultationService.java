@@ -11,6 +11,7 @@ import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
@@ -31,6 +32,7 @@ import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import com.fitback.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,6 +56,7 @@ public class ConsultationService {
     private final ConsultationRepository consultationRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final AiConsultationClient aiConsultationClient;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
         if (storeId == null) {
@@ -141,6 +144,7 @@ public class ConsultationService {
         applyRegistrationStatus(customer, service, request.getConsultation().getRegistrationStatus());
         Consultation consultation = saveConsultation(customer, counselor, service, request);
         saveConsultationCreatedTimeline(customer, counselor, service, consultation);
+        eventPublisher.publishEvent(new ConsultationCreatedEvent(consultation.getId()));
 
         return ConsultationCreateResponse.builder()
                 .consultationId(consultation.getId())
