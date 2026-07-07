@@ -56,4 +56,8 @@ public class FollowUp extends BaseTimeEntity {
 
     @Column(columnDefinition = "text")
     private String memo;
+
+    public void markSuperseded() {
+        this.status = FollowUpStatus.SUPERSEDED;
+    }
 }

@@ -85,4 +85,14 @@ public class Consultation extends BaseTimeEntity {
 
     @Column(name = "ai_parsed_at")
     private OffsetDateTime aiParsedAt;
+
+    public void completeAiAnalysis(String summary, OffsetDateTime parsedAt) {
+        this.summary = summary;
+        this.aiAnalysisStatus = AiAnalysisStatus.COMPLETED;
+        this.aiParsedAt = parsedAt;
+    }
+
+    public void markAiAnalysisFailed() {
+        this.aiAnalysisStatus = AiAnalysisStatus.FAILED;
+    }
 }
