@@ -9,8 +9,10 @@ import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
+import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
@@ -207,6 +209,70 @@ public class CustomerService {
                 .build();
     }
 
+    @Transactional
+    public CustomerAiAnalysisUpdateResponse updateAiAnalysis(
+            UUID storeId,
+            UUID customerId,
+            CustomerAiAnalysisUpdateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        Consultation latestConsultation = consultationRepository
+                .findFirstByCustomerIdOrderBySessionNoDesc(customerId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CONSULTATION_NOT_FOUND));
+
+        CustomerAiInsight customerAiInsight = customerAiInsightRepository.findById(customerId)
+                .orElseGet(() -> CustomerAiInsight.builder()
+                        .customer(customer)
+                        .build());
+
+        List<NonConversionReason> existingReasons = nonConversionReasonRepository
+                .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
+        Map<String, Object> beforeValue = buildAiAnalysisTimelineValue(
+                latestConsultation.getSummary(),
+                customerAiInsight.getLeadTemperature(),
+                findPrimaryReasonType(existingReasons)
+        );
+
+        latestConsultation.updateSummary(request.getSummary());
+        customerAiInsight.updateManualAnalysis(request.getLeadTemperature(), request.getTemperatureBasis());
+        customerAiInsightRepository.save(customerAiInsight);
+
+        nonConversionReasonRepository.deleteAllByCustomerId(customerId);
+        List<NonConversionReason> newReasons = request.getNonConversionReasons().stream()
+                .map(reason -> NonConversionReason.builder()
+                        .customer(customer)
+                        .consultation(latestConsultation)
+                        .reasonType(reason.getReasonType())
+                        .role(reason.getRole())
+                        .reasonBasis(reason.getReasonBasis())
+                        .confidence(reason.getConfidence())
+                        .build())
+                .toList();
+        nonConversionReasonRepository.saveAll(newReasons);
+
+        Map<String, Object> afterValue = buildAiAnalysisTimelineValue(
+                request.getSummary(),
+                request.getLeadTemperature(),
+                findPrimaryReasonType(newReasons)
+        );
+        saveAiAnalysisManuallyUpdatedTimeline(customer, latestConsultation, beforeValue, afterValue);
+
+        return CustomerAiAnalysisUpdateResponse.builder()
+                .customerId(customer.getId())
+                .nextActionRegenerationAvailable(true)
+                .build();
+    }
+
     private CustomerDetailResponse.CustomerInfo toCustomerInfo(Customer customer) {
         Service registeredService = customer.getRegisteredService();
 
@@ -253,6 +319,52 @@ public class CustomerService {
                 .build();
 
         customerActivityTimelineRepository.save(timeline);
+    }
+
+    private void saveAiAnalysisManuallyUpdatedTimeline(
+            Customer customer,
+            Consultation consultation,
+            Map<String, Object> beforeValue,
+            Map<String, Object> afterValue
+    ) {
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(consultation.getUser())
+                .activityType(CustomerActivityType.AI_ANALYSIS_MANUALLY_UPDATED)
+                .title("AI 분석값이 수정되었습니다.")
+                .description("사용자가 AI 상담요약, 고객온도 또는 주요 이탈요인을 수정했습니다.")
+                .relatedType(ActivityRelatedType.CUSTOMER)
+                .relatedId(customer.getId())
+                .beforeValue(beforeValue)
+                .afterValue(afterValue)
+                .occurredAt(OffsetDateTime.now())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
+    }
+
+    private Map<String, Object> buildAiAnalysisTimelineValue(
+            String summary,
+            String leadTemperature,
+            String primaryReasonType
+    ) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("summary", summary);
+        value.put("leadTemperature", leadTemperature);
+        value.put("primaryReasonType", primaryReasonType);
+        return value;
+    }
+
+    private String findPrimaryReasonType(List<NonConversionReason> reasons) {
+        if (reasons == null) {
+            return null;
+        }
+        return reasons.stream()
+                .filter(reason -> "PRIMARY".equals(reason.getRole()))
+                .map(NonConversionReason::getReasonType)
+                .findFirst()
+                .orElse(null);
     }
 
     private CustomerDetailResponse.LatestConsultation toLatestConsultation(Consultation consultation) {
