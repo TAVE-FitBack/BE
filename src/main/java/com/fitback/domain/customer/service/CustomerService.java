@@ -16,6 +16,7 @@ import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
+import com.fitback.domain.customer.dto.request.MessageTemplateMarkSentRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
@@ -24,6 +25,7 @@ import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -249,6 +251,55 @@ public class CustomerService {
                 .tonePreset(request.getTonePreset())
                 .deliveryStatus(MessageDeliveryStatus.DRAFT)
                 .generatedAt(savedMessageTemplate.getGeneratedAt())
+                .build();
+    }
+
+    @Transactional
+    public MessageTemplateMarkSentResponse markMessageTemplateSent(
+            UUID storeId,
+            UUID userId,
+            UUID messageTemplateId,
+            MessageTemplateMarkSentRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        MessageTemplate messageTemplate = messageTemplateRepository.findById(messageTemplateId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND));
+
+        Customer customer = messageTemplate.getCustomer();
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        User actorUser = userRepository.findByIdAndStore_Id(userId, storeId)
+                .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+        FollowUp followUp = messageTemplate.getFollowUp();
+        if (followUp == null) {
+            throw new BusinessException(CustomerErrorCode.ACTIVE_FOLLOW_UP_NOT_FOUND);
+        }
+
+        if (followUp.getStatus() != FollowUpStatus.PENDING) {
+            throw new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_PENDING);
+        }
+
+        OffsetDateTime sentAt = request != null && request.getSentAt() != null
+                ? request.getSentAt()
+                : OffsetDateTime.now();
+        String beforeDeliveryStatus = messageTemplate.getDeliveryStatus();
+
+        messageTemplate.markSent(sentAt);
+        followUp.markCompleted();
+        saveMessageSentTimeline(customer, actorUser, messageTemplate, beforeDeliveryStatus);
+
+        return MessageTemplateMarkSentResponse.builder()
+                .messageTemplateId(messageTemplate.getId())
+                .deliveryStatus(MessageDeliveryStatus.SENT)
+                .sentAt(messageTemplate.getSentAt())
+                .followUpId(followUp.getId())
+                .followUpStatus(followUp.getStatus())
                 .build();
     }
 
@@ -660,6 +711,36 @@ public class CustomerService {
                 .relatedId(messageTemplate.getId())
                 .afterValue(afterValue)
                 .occurredAt(OffsetDateTime.now())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
+    }
+
+    private void saveMessageSentTimeline(
+            Customer customer,
+            User actorUser,
+            MessageTemplate messageTemplate,
+            String beforeDeliveryStatus
+    ) {
+        Map<String, Object> beforeValue = new LinkedHashMap<>();
+        beforeValue.put("deliveryStatus", beforeDeliveryStatus);
+
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("deliveryStatus", messageTemplate.getDeliveryStatus());
+        afterValue.put("sentAt", messageTemplate.getSentAt());
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(actorUser)
+                .activityType(CustomerActivityType.MESSAGE_SENT)
+                .title("메시지 전송이 완료되었습니다.")
+                .description("사용자가 외부 채널로 메시지 전송을 완료 처리했습니다.")
+                .relatedType(ActivityRelatedType.MESSAGE_TEMPLATE)
+                .relatedId(messageTemplate.getId())
+                .beforeValue(beforeValue)
+                .afterValue(afterValue)
+                .occurredAt(messageTemplate.getSentAt())
                 .build();
 
         customerActivityTimelineRepository.save(timeline);
