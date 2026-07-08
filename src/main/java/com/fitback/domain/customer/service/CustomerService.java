@@ -11,14 +11,22 @@ import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.client.AiMessageClient;
+import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
+import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
+import com.fitback.domain.customer.dto.request.MessageTemplateMarkSentRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
+import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
@@ -32,10 +40,14 @@ import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
+import com.fitback.domain.customer.enums.MessageDeliveryStatus;
+import com.fitback.domain.customer.enums.MessageTonePreset;
+import com.fitback.domain.customer.enums.MessageVersionType;
 import com.fitback.domain.customer.exception.CustomerErrorCode;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerAiInsightRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.EventQueryRepository;
 import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
@@ -43,6 +55,7 @@ import com.fitback.domain.customer.repository.NonConversionReasonRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.user.entity.User;
+import com.fitback.domain.user.exception.UserErrorCode;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +63,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -74,8 +88,10 @@ public class CustomerService {
     private final FollowUpAiInsightRepository followUpAiInsightRepository;
     private final MessageTemplateRepository messageTemplateRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
+    private final EventQueryRepository eventQueryRepository;
     private final ServiceRepository serviceRepository;
     private final AiConsultationClient aiConsultationClient;
+    private final AiMessageClient aiMessageClient;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -129,6 +145,161 @@ public class CustomerService {
                 .nextBestAction(toNextBestAction(followUpAiInsight))
                 .latestMessageTemplate(toLatestMessageTemplate(latestMessageTemplate))
                 .timeline(toTimelineItems(timeline))
+                .build();
+    }
+
+    public MessageTemplateOptionsResponse getMessageTemplateOptions(UUID storeId, UUID customerId) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        return MessageTemplateOptionsResponse.builder()
+                .tonePresets(toTonePresetOptions())
+                .versionTypes(toVersionTypeOptions())
+                .events(toEventOptions(eventQueryRepository.findActiveEventsByStoreId(storeId)))
+                .build();
+    }
+
+    @Transactional
+    public MessageTemplateCreateResponse createMessageTemplate(
+            UUID storeId,
+            UUID userId,
+            UUID customerId,
+            MessageTemplateCreateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        User actorUser = userRepository.findByIdAndStore_Id(userId, storeId)
+                .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+        FollowUp followUp = followUpRepository.findById(request.getFollowUpId())
+                .filter(foundFollowUp -> customerId.equals(foundFollowUp.getCustomer().getId()))
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.ACTIVE_FOLLOW_UP_NOT_FOUND));
+
+        if (followUp.getStatus() != FollowUpStatus.PENDING) {
+            throw new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_PENDING);
+        }
+
+        Consultation latestConsultation = consultationRepository
+                .findFirstByCustomerIdOrderBySessionNoDesc(customerId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CONSULTATION_NOT_FOUND));
+
+        FollowUpAiInsight followUpAiInsight = followUpAiInsightRepository.findById(followUp.getId())
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.NEXT_ACTION_NOT_FOUND));
+
+        CustomerAiInsight customerAiInsight = customerAiInsightRepository.findById(customerId)
+                .orElse(null);
+
+        List<NonConversionReason> nonConversionReasons = nonConversionReasonRepository
+                .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
+
+        EventQueryRepository.EventOptionRow event = request.getEventId() == null
+                ? null
+                : eventQueryRepository.findActiveEventByIdAndStoreId(request.getEventId(), storeId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.EVENT_NOT_FOUND));
+
+        AiMessageGenerateResponse aiResponse = aiMessageClient.generateMessage(
+                buildMessageGenerateAiRequest(
+                        customer,
+                        latestConsultation,
+                        customerAiInsight,
+                        nonConversionReasons,
+                        followUpAiInsight,
+                        event,
+                        request
+                )
+        );
+
+        OffsetDateTime now = OffsetDateTime.now();
+        MessageTemplate messageTemplate = MessageTemplate.builder()
+                .followUp(followUp)
+                .eventId(event != null ? event.eventId() : null)
+                .customer(customer)
+                .content(aiResponse.getContent())
+                .versionType(request.getVersionType().name())
+                .tonePreset(request.getTonePreset().name())
+                .deliveryStatus(MessageDeliveryStatus.DRAFT.name())
+                .scheduledAt(null)
+                .generatedAt(now)
+                .updatedAt(now)
+                .build();
+        MessageTemplate savedMessageTemplate = messageTemplateRepository.save(messageTemplate);
+        saveMessageTemplateCreatedTimeline(customer, actorUser, savedMessageTemplate);
+
+        return MessageTemplateCreateResponse.builder()
+                .messageTemplateId(savedMessageTemplate.getId())
+                .customerId(customer.getId())
+                .followUpId(followUp.getId())
+                .content(savedMessageTemplate.getContent())
+                .versionType(request.getVersionType())
+                .tonePreset(request.getTonePreset())
+                .deliveryStatus(MessageDeliveryStatus.DRAFT)
+                .generatedAt(savedMessageTemplate.getGeneratedAt())
+                .build();
+    }
+
+    @Transactional
+    public MessageTemplateMarkSentResponse markMessageTemplateSent(
+            UUID storeId,
+            UUID userId,
+            UUID messageTemplateId,
+            MessageTemplateMarkSentRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        MessageTemplate messageTemplate = messageTemplateRepository.findById(messageTemplateId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND));
+
+        Customer customer = messageTemplate.getCustomer();
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        User actorUser = userRepository.findByIdAndStore_Id(userId, storeId)
+                .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+        FollowUp followUp = messageTemplate.getFollowUp();
+        if (followUp == null) {
+            throw new BusinessException(CustomerErrorCode.ACTIVE_FOLLOW_UP_NOT_FOUND);
+        }
+
+        if (followUp.getStatus() != FollowUpStatus.PENDING) {
+            throw new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_PENDING);
+        }
+
+        OffsetDateTime sentAt = request != null && request.getSentAt() != null
+                ? request.getSentAt()
+                : OffsetDateTime.now();
+        String beforeDeliveryStatus = messageTemplate.getDeliveryStatus();
+
+        messageTemplate.markSent(sentAt);
+        followUp.markCompleted();
+        saveMessageSentTimeline(customer, actorUser, messageTemplate, beforeDeliveryStatus);
+
+        return MessageTemplateMarkSentResponse.builder()
+                .messageTemplateId(messageTemplate.getId())
+                .deliveryStatus(MessageDeliveryStatus.SENT)
+                .sentAt(messageTemplate.getSentAt())
+                .followUpId(followUp.getId())
+                .followUpStatus(followUp.getStatus())
                 .build();
     }
 
@@ -422,6 +593,157 @@ public class CustomerService {
                 .firstConsultAt(customer.getFirstConsultAt())
                 .latestConsultAt(customer.getLatestConsultAt())
                 .build();
+    }
+
+    private List<MessageTemplateOptionsResponse.TonePresetOption> toTonePresetOptions() {
+        return Arrays.stream(MessageTonePreset.values())
+                .map(tonePreset -> MessageTemplateOptionsResponse.TonePresetOption.builder()
+                        .tonePreset(tonePreset)
+                        .label(tonePreset.getLabel())
+                        .build())
+                .toList();
+    }
+
+    private List<MessageTemplateOptionsResponse.VersionTypeOption> toVersionTypeOptions() {
+        return Arrays.stream(MessageVersionType.values())
+                .map(versionType -> MessageTemplateOptionsResponse.VersionTypeOption.builder()
+                        .versionType(versionType)
+                        .label(versionType.getLabel())
+                        .build())
+                .toList();
+    }
+
+    private List<MessageTemplateOptionsResponse.EventOption> toEventOptions(
+            List<EventQueryRepository.EventOptionRow> events
+    ) {
+        return events.stream()
+                .map(event -> MessageTemplateOptionsResponse.EventOption.builder()
+                        .eventId(event.eventId())
+                        .title(event.title())
+                        .eventType(event.eventType())
+                        .description(event.description())
+                        .discountRate(event.discountRate())
+                        .startDate(event.startDate())
+                        .endDate(event.endDate())
+                        .build())
+                .toList();
+    }
+
+    private AiMessageGenerateRequest buildMessageGenerateAiRequest(
+            Customer customer,
+            Consultation latestConsultation,
+            CustomerAiInsight customerAiInsight,
+            List<NonConversionReason> nonConversionReasons,
+            FollowUpAiInsight followUpAiInsight,
+            EventQueryRepository.EventOptionRow event,
+            MessageTemplateCreateRequest request
+    ) {
+        return AiMessageGenerateRequest.builder()
+                .customer(AiMessageGenerateRequest.CustomerInfo.builder()
+                        .customerId(customer.getId())
+                        .name(customer.getName())
+                        .preferredContactChannel(customer.getPreferredContactChannel())
+                        .status(customer.getStatus())
+                        .build())
+                .latestConsultation(AiMessageGenerateRequest.LatestConsultationInfo.builder()
+                        .consultationId(latestConsultation.getId())
+                        .summary(latestConsultation.getSummary())
+                        .build())
+                .aiInsight(AiMessageGenerateRequest.AiInsightInfo.builder()
+                        .leadTemperature(customerAiInsight != null ? customerAiInsight.getLeadTemperature() : null)
+                        .priorityScore(customerAiInsight != null ? customerAiInsight.getPriorityScore() : null)
+                        .build())
+                .nonConversionReasons(nonConversionReasons.stream()
+                        .map(reason -> AiMessageGenerateRequest.NonConversionReasonInfo.builder()
+                                .reasonType(reason.getReasonType())
+                                .role(reason.getRole())
+                                .reasonBasis(reason.getReasonBasis())
+                                .build())
+                        .toList())
+                .nextBestAction(AiMessageGenerateRequest.NextBestActionInfo.builder()
+                        .title(getStringValue(followUpAiInsight.getActionBasis(), NEXT_ACTION_TITLE_KEY))
+                        .description(getStringValue(followUpAiInsight.getActionBasis(), NEXT_ACTION_DESCRIPTION_KEY))
+                        .persuasionPoint(followUpAiInsight.getPersuasionPoint())
+                        .cautionNote(followUpAiInsight.getCautionNote())
+                        .actionBasis(followUpAiInsight.getActionBasis())
+                        .build())
+                .event(toAiEventInfo(event))
+                .messageOptions(AiMessageGenerateRequest.MessageOptions.builder()
+                        .tonePreset(request.getTonePreset())
+                        .versionType(request.getVersionType())
+                        .additionalInstruction(request.getAdditionalInstruction())
+                        .build())
+                .build();
+    }
+
+    private AiMessageGenerateRequest.EventInfo toAiEventInfo(EventQueryRepository.EventOptionRow event) {
+        if (event == null) {
+            return null;
+        }
+
+        return AiMessageGenerateRequest.EventInfo.builder()
+                .eventId(event.eventId())
+                .title(event.title())
+                .description(event.description())
+                .discountRate(event.discountRate())
+                .build();
+    }
+
+    private void saveMessageTemplateCreatedTimeline(
+            Customer customer,
+            User actorUser,
+            MessageTemplate messageTemplate
+    ) {
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("messageTemplateId", messageTemplate.getId());
+        afterValue.put("followUpId", messageTemplate.getFollowUp().getId());
+        afterValue.put("tonePreset", messageTemplate.getTonePreset());
+        afterValue.put("deliveryStatus", messageTemplate.getDeliveryStatus());
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(actorUser)
+                .activityType(CustomerActivityType.MESSAGE_TEMPLATE_CREATED)
+                .title("메시지 초안이 생성되었습니다.")
+                .description("다음 최적 액션을 바탕으로 고객에게 보낼 메시지 초안이 생성되었습니다.")
+                .relatedType(ActivityRelatedType.MESSAGE_TEMPLATE)
+                .relatedId(messageTemplate.getId())
+                .afterValue(afterValue)
+                .occurredAt(OffsetDateTime.now())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
+    }
+
+    private void saveMessageSentTimeline(
+            Customer customer,
+            User actorUser,
+            MessageTemplate messageTemplate,
+            String beforeDeliveryStatus
+    ) {
+        Map<String, Object> beforeValue = new LinkedHashMap<>();
+        beforeValue.put("deliveryStatus", beforeDeliveryStatus);
+
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("deliveryStatus", messageTemplate.getDeliveryStatus());
+        afterValue.put("sentAt", messageTemplate.getSentAt());
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(actorUser)
+                .activityType(CustomerActivityType.MESSAGE_SENT)
+                .title("메시지 전송이 완료되었습니다.")
+                .description("사용자가 외부 채널로 메시지 전송을 완료 처리했습니다.")
+                .relatedType(ActivityRelatedType.MESSAGE_TEMPLATE)
+                .relatedId(messageTemplate.getId())
+                .beforeValue(beforeValue)
+                .afterValue(afterValue)
+                .occurredAt(messageTemplate.getSentAt())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
     }
 
     private void saveReconsultationCreatedTimeline(

@@ -24,6 +24,30 @@ public enum CustomerErrorCode implements BaseErrorCode {
     INVALID_CUSTOMER_STATUS(
             HttpStatus.BAD_REQUEST,
             "허용되지 않는 고객 상태입니다."
+    ),
+    ACTIVE_FOLLOW_UP_NOT_FOUND(
+            HttpStatus.BAD_REQUEST,
+            "진행 중인 후속 연락을 찾을 수 없습니다."
+    ),
+    FOLLOW_UP_NOT_PENDING(
+            HttpStatus.BAD_REQUEST,
+            "후속 연락이 대기 상태가 아닙니다."
+    ),
+    NEXT_ACTION_NOT_FOUND(
+            HttpStatus.BAD_REQUEST,
+            "다음 최적 액션을 찾을 수 없습니다."
+    ),
+    EVENT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "이벤트를 찾을 수 없습니다."
+    ),
+    MESSAGE_TEMPLATE_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "메시지 초안을 찾을 수 없습니다."
+    ),
+    MESSAGE_GENERATION_FAILED(
+            HttpStatus.BAD_GATEWAY,
+            "메시지 생성에 실패했습니다."
     );
 
     private final HttpStatus httpStatus;
