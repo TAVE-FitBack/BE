@@ -1,8 +1,12 @@
 package com.fitback.domain.customer.service;
 
+import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
+import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -21,6 +25,7 @@ import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
 import com.fitback.domain.service.entity.Service;
+import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +50,8 @@ public class CustomerService {
     private final FollowUpAiInsightRepository followUpAiInsightRepository;
     private final MessageTemplateRepository messageTemplateRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
+    private final ServiceRepository serviceRepository;
+    private final AiConsultationClient aiConsultationClient;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -97,6 +104,39 @@ public class CustomerService {
                 .latestMessageTemplate(toLatestMessageTemplate(latestMessageTemplate))
                 .timeline(toTimelineItems(timeline))
                 .build();
+    }
+
+    public Map<String, Object> checkReconsultationPreview(
+            UUID storeId,
+            UUID customerId,
+            ReconsultationCheckPreviewRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        Service service = serviceRepository
+                .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
+
+        AiCheckPreviewRequest aiRequest = AiCheckPreviewRequest.builder()
+                .rawText(request.getConsultation().getRawText())
+                .serviceName(service.getName())
+                .customerInfo(AiCheckPreviewRequest.CustomerInfo.builder()
+                        .name(customer.getName())
+                        .gender(customer.getGender())
+                        .birthDate(customer.getBirthDate())
+                        .build())
+                .build();
+
+        return aiConsultationClient.checkPreview(aiRequest);
     }
 
     private CustomerDetailResponse.CustomerInfo toCustomerInfo(Customer customer) {
