@@ -19,6 +19,7 @@ import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
@@ -32,10 +33,13 @@ import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
+import com.fitback.domain.customer.enums.MessageTonePreset;
+import com.fitback.domain.customer.enums.MessageVersionType;
 import com.fitback.domain.customer.exception.CustomerErrorCode;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerAiInsightRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.EventQueryRepository;
 import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
@@ -50,6 +54,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -74,6 +79,7 @@ public class CustomerService {
     private final FollowUpAiInsightRepository followUpAiInsightRepository;
     private final MessageTemplateRepository messageTemplateRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
+    private final EventQueryRepository eventQueryRepository;
     private final ServiceRepository serviceRepository;
     private final AiConsultationClient aiConsultationClient;
     private final UserRepository userRepository;
@@ -129,6 +135,25 @@ public class CustomerService {
                 .nextBestAction(toNextBestAction(followUpAiInsight))
                 .latestMessageTemplate(toLatestMessageTemplate(latestMessageTemplate))
                 .timeline(toTimelineItems(timeline))
+                .build();
+    }
+
+    public MessageTemplateOptionsResponse getMessageTemplateOptions(UUID storeId, UUID customerId) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        return MessageTemplateOptionsResponse.builder()
+                .tonePresets(toTonePresetOptions())
+                .versionTypes(toVersionTypeOptions())
+                .events(toEventOptions(eventQueryRepository.findActiveEventsByStoreId(storeId)))
                 .build();
     }
 
@@ -422,6 +447,40 @@ public class CustomerService {
                 .firstConsultAt(customer.getFirstConsultAt())
                 .latestConsultAt(customer.getLatestConsultAt())
                 .build();
+    }
+
+    private List<MessageTemplateOptionsResponse.TonePresetOption> toTonePresetOptions() {
+        return Arrays.stream(MessageTonePreset.values())
+                .map(tonePreset -> MessageTemplateOptionsResponse.TonePresetOption.builder()
+                        .tonePreset(tonePreset)
+                        .label(tonePreset.getLabel())
+                        .build())
+                .toList();
+    }
+
+    private List<MessageTemplateOptionsResponse.VersionTypeOption> toVersionTypeOptions() {
+        return Arrays.stream(MessageVersionType.values())
+                .map(versionType -> MessageTemplateOptionsResponse.VersionTypeOption.builder()
+                        .versionType(versionType)
+                        .label(versionType.getLabel())
+                        .build())
+                .toList();
+    }
+
+    private List<MessageTemplateOptionsResponse.EventOption> toEventOptions(
+            List<EventQueryRepository.EventOptionRow> events
+    ) {
+        return events.stream()
+                .map(event -> MessageTemplateOptionsResponse.EventOption.builder()
+                        .eventId(event.eventId())
+                        .title(event.title())
+                        .eventType(event.eventType())
+                        .description(event.description())
+                        .discountRate(event.discountRate())
+                        .startDate(event.startDate())
+                        .endDate(event.endDate())
+                        .build())
+                .toList();
     }
 
     private void saveReconsultationCreatedTimeline(

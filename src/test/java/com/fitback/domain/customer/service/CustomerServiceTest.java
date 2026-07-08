@@ -17,6 +17,7 @@ import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
@@ -32,11 +33,14 @@ import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
 import com.fitback.domain.customer.enums.Gender;
+import com.fitback.domain.customer.enums.MessageTonePreset;
+import com.fitback.domain.customer.enums.MessageVersionType;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.customer.exception.CustomerErrorCode;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerAiInsightRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.EventQueryRepository;
 import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
@@ -58,6 +62,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -102,6 +107,9 @@ class CustomerServiceTest {
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
     @Mock
+    private EventQueryRepository eventQueryRepository;
+
+    @Mock
     private ServiceRepository serviceRepository;
 
     @Mock
@@ -126,6 +134,7 @@ class CustomerServiceTest {
                 followUpAiInsightRepository,
                 messageTemplateRepository,
                 customerActivityTimelineRepository,
+                eventQueryRepository,
                 serviceRepository,
                 aiConsultationClient,
                 userRepository,
@@ -296,6 +305,57 @@ class CustomerServiceTest {
                 .isEqualTo(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
 
         verify(customerRepository).findById(customerId);
+        verifyNoInteractions(
+                consultationRepository,
+                customerAiInsightRepository,
+                nonConversionReasonRepository,
+                followUpRepository,
+                followUpAiInsightRepository,
+                messageTemplateRepository,
+                customerActivityTimelineRepository
+        );
+    }
+
+    @Test
+    @DisplayName("메시지 생성 옵션 조회는 말투, 길이 버전, 매장의 활성 이벤트 목록을 반환한다")
+    void getMessageTemplateOptions() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        EventQueryRepository.EventOptionRow event = new EventQueryRepository.EventOptionRow(
+                eventId,
+                "7월 PT 등록 이벤트",
+                "DISCOUNT",
+                "PT 첫 달 10% 할인",
+                BigDecimal.valueOf(10.0),
+                LocalDate.of(2026, 7, 1),
+                LocalDate.of(2026, 7, 31)
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(eventQueryRepository.findActiveEventsByStoreId(storeId)).thenReturn(List.of(event));
+
+        MessageTemplateOptionsResponse response = customerService.getMessageTemplateOptions(storeId, customerId);
+
+        assertThat(response.getTonePresets())
+                .extracting(MessageTemplateOptionsResponse.TonePresetOption::getTonePreset)
+                .containsExactly(MessageTonePreset.FRIENDLY, MessageTonePreset.PROFESSIONAL, MessageTonePreset.SOFT);
+        assertThat(response.getTonePresets())
+                .extracting(MessageTemplateOptionsResponse.TonePresetOption::getLabel)
+                .containsExactly("친근한 말투", "전문적인 말투", "부드러운 말투");
+        assertThat(response.getVersionTypes())
+                .extracting(MessageTemplateOptionsResponse.VersionTypeOption::getVersionType)
+                .containsExactly(MessageVersionType.SHORT, MessageVersionType.STANDARD);
+        assertThat(response.getEvents()).hasSize(1);
+        assertThat(response.getEvents().get(0).getEventId()).isEqualTo(eventId);
+        assertThat(response.getEvents().get(0).getTitle()).isEqualTo("7월 PT 등록 이벤트");
+        assertThat(response.getEvents().get(0).getEventType()).isEqualTo("DISCOUNT");
+        assertThat(response.getEvents().get(0).getDiscountRate()).isEqualByComparingTo("10.0");
+
+        verify(customerRepository).findById(customerId);
+        verify(eventQueryRepository).findActiveEventsByStoreId(storeId);
         verifyNoInteractions(
                 consultationRepository,
                 customerAiInsightRepository,
