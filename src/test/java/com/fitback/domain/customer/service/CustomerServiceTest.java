@@ -14,6 +14,7 @@ import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
+import com.fitback.domain.customer.dto.request.MessageTemplateMarkSentRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
@@ -22,6 +23,7 @@ import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -518,6 +520,79 @@ class CustomerServiceTest {
                         && messageTemplateId.equals(timeline.getAfterValue().get("messageTemplateId"))
                         && followUpId.equals(timeline.getAfterValue().get("followUpId"))
         ));
+    }
+
+    @Test
+    @DisplayName("메시지 전송 완료는 메시지를 SENT로 변경하고 연결된 follow_up을 COMPLETED 처리한다")
+    void markMessageTemplateSent() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        OffsetDateTime sentAt = OffsetDateTime.parse("2026-07-08T15:20:00+09:00");
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                actorUser,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+        MessageTemplateMarkSentRequest request = messageTemplateMarkSentRequest(sentAt);
+
+        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                request
+        );
+
+        assertThat(response.getMessageTemplateId()).isEqualTo(messageTemplateId);
+        assertThat(response.getDeliveryStatus().name()).isEqualTo("SENT");
+        assertThat(response.getSentAt()).isEqualTo(sentAt);
+        assertThat(response.getFollowUpId()).isEqualTo(followUp.getId());
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
+        assertThat(messageTemplate.getSentAt()).isEqualTo(sentAt);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.MESSAGE_SENT
+                        && timeline.getRelatedType() == ActivityRelatedType.MESSAGE_TEMPLATE
+                        && messageTemplateId.equals(timeline.getRelatedId())
+                        && actorUser == timeline.getActorUser()
+                        && "DRAFT".equals(timeline.getBeforeValue().get("deliveryStatus"))
+                        && "SENT".equals(timeline.getAfterValue().get("deliveryStatus"))
+                        && sentAt.equals(timeline.getAfterValue().get("sentAt"))
+        ));
+        verifyNoInteractions(
+                aiMessageClient,
+                consultationRepository,
+                customerAiInsightRepository,
+                nonConversionReasonRepository,
+                followUpAiInsightRepository,
+                eventQueryRepository
+        );
     }
 
     @Test
@@ -1236,6 +1311,12 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(request, "versionType", versionType);
         ReflectionTestUtils.setField(request, "eventId", eventId);
         ReflectionTestUtils.setField(request, "additionalInstruction", additionalInstruction);
+        return request;
+    }
+
+    private MessageTemplateMarkSentRequest messageTemplateMarkSentRequest(OffsetDateTime sentAt) {
+        MessageTemplateMarkSentRequest request = new MessageTemplateMarkSentRequest();
+        ReflectionTestUtils.setField(request, "sentAt", sentAt);
         return request;
     }
 
