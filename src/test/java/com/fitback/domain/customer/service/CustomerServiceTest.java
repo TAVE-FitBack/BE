@@ -82,6 +82,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -379,6 +380,26 @@ class CustomerServiceTest {
     }
 
     @Test
+    @DisplayName("메시지 생성 옵션 조회 시 고객이 다른 매장 소속이면 CUSTOMER_ACCESS_DENIED 예외가 발생한다")
+    void getMessageTemplateOptionsAccessDenied() {
+        UUID storeId = UUID.randomUUID();
+        UUID otherStoreId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store otherStore = store(otherStoreId);
+        Customer customer = customer(customerId, otherStore, null, inflowPathOption(UUID.randomUUID(), otherStore));
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+
+        assertThatThrownBy(() -> customerService.getMessageTemplateOptions(storeId, customerId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+
+        verify(customerRepository).findById(customerId);
+        verifyNoInteractions(eventQueryRepository);
+    }
+
+    @Test
     @DisplayName("메시지 초안 생성은 PENDING follow_up 기준으로 AI 메시지를 생성하고 DRAFT 상태로 저장한다")
     void createMessageTemplate() {
         UUID storeId = UUID.randomUUID();
@@ -520,6 +541,179 @@ class CustomerServiceTest {
                         && messageTemplateId.equals(timeline.getAfterValue().get("messageTemplateId"))
                         && followUpId.equals(timeline.getAfterValue().get("followUpId"))
         ));
+        verify(followUpRepository, never()).save(any(FollowUp.class));
+        verify(followUpAiInsightRepository, never()).save(any(FollowUpAiInsight.class));
+        verify(customerAiInsightRepository, never()).save(any(CustomerAiInsight.class));
+        verify(nonConversionReasonRepository, never()).saveAll(any());
+        verify(nonConversionReasonRepository, never()).deleteAllByCustomerId(any());
+    }
+
+    @Test
+    @DisplayName("메시지 초안 생성 시 follow_up이 없으면 ACTIVE_FOLLOW_UP_NOT_FOUND 예외가 발생한다")
+    void createMessageTemplateFollowUpNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        User actorUser = user(userId, store, "문형주");
+        MessageTemplateCreateRequest request = messageTemplateCreateRequest(
+                followUpId,
+                MessageTonePreset.FRIENDLY,
+                MessageVersionType.STANDARD,
+                null,
+                null
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+        when(followUpRepository.findById(followUpId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerService.createMessageTemplate(storeId, userId, customerId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.ACTIVE_FOLLOW_UP_NOT_FOUND);
+
+        verifyNoInteractions(aiMessageClient, messageTemplateRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("메시지 초안 생성 시 follow_up이 PENDING이 아니면 FOLLOW_UP_NOT_PENDING 예외가 발생한다")
+    void createMessageTemplateFollowUpNotPending() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        User actorUser = user(userId, store, "문형주");
+        FollowUp followUp = FollowUp.builder()
+                .id(followUpId)
+                .customer(customer)
+                .consultation(consultation(UUID.randomUUID(), customer, actorUser, service(UUID.randomUUID(), store, "PT"), 1, AiAnalysisStatus.COMPLETED))
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.COMPLETED)
+                .build();
+        MessageTemplateCreateRequest request = messageTemplateCreateRequest(
+                followUpId,
+                MessageTonePreset.FRIENDLY,
+                MessageVersionType.STANDARD,
+                null,
+                null
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+        when(followUpRepository.findById(followUpId)).thenReturn(Optional.of(followUp));
+
+        assertThatThrownBy(() -> customerService.createMessageTemplate(storeId, userId, customerId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_NOT_PENDING);
+
+        verifyNoInteractions(aiMessageClient, messageTemplateRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("메시지 초안 생성 시 선택 이벤트가 활성 이벤트가 아니면 EVENT_NOT_FOUND 예외가 발생한다")
+    void createMessageTemplateEventNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(followUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
+                .followUp(followUp)
+                .persuasionPoint(Map.of("main", "초기 비용 부담 완화"))
+                .actionBasis(Map.of("title", "액션", "description", "설명"))
+                .build();
+        MessageTemplateCreateRequest request = messageTemplateCreateRequest(
+                followUpId,
+                MessageTonePreset.FRIENDLY,
+                MessageVersionType.STANDARD,
+                eventId,
+                null
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+        when(followUpRepository.findById(followUpId)).thenReturn(Optional.of(followUp));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId)).thenReturn(Optional.of(latestConsultation));
+        when(followUpAiInsightRepository.findById(followUpId)).thenReturn(Optional.of(followUpAiInsight));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId)).thenReturn(List.of());
+        when(eventQueryRepository.findActiveEventByIdAndStoreId(eventId, storeId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerService.createMessageTemplate(storeId, userId, customerId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.EVENT_NOT_FOUND);
+
+        verifyNoInteractions(aiMessageClient, messageTemplateRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("메시지 초안 생성 시 FastAPI가 실패하면 MESSAGE_GENERATION_FAILED 예외가 발생하고 저장하지 않는다")
+    void createMessageTemplateAiFailed() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(followUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
+                .followUp(followUp)
+                .persuasionPoint(Map.of("main", "초기 비용 부담 완화"))
+                .actionBasis(Map.of("title", "액션", "description", "설명"))
+                .build();
+        MessageTemplateCreateRequest request = messageTemplateCreateRequest(
+                followUpId,
+                MessageTonePreset.FRIENDLY,
+                MessageVersionType.STANDARD,
+                null,
+                null
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+        when(followUpRepository.findById(followUpId)).thenReturn(Optional.of(followUp));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId)).thenReturn(Optional.of(latestConsultation));
+        when(followUpAiInsightRepository.findById(followUpId)).thenReturn(Optional.of(followUpAiInsight));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId)).thenReturn(List.of());
+        when(aiMessageClient.generateMessage(any(AiMessageGenerateRequest.class)))
+                .thenThrow(new BusinessException(CustomerErrorCode.MESSAGE_GENERATION_FAILED));
+
+        assertThatThrownBy(() -> customerService.createMessageTemplate(storeId, userId, customerId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.MESSAGE_GENERATION_FAILED);
+
+        verify(messageTemplateRepository, never()).save(any(MessageTemplate.class));
+        verify(customerActivityTimelineRepository, never()).save(any(CustomerActivityTimeline.class));
     }
 
     @Test
@@ -593,6 +787,71 @@ class CustomerServiceTest {
                 followUpAiInsightRepository,
                 eventQueryRepository
         );
+    }
+
+    @Test
+    @DisplayName("메시지 전송 완료 시 메시지 초안이 없으면 MESSAGE_TEMPLATE_NOT_FOUND 예외가 발생한다")
+    void markMessageTemplateSentMessageNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+
+        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND);
+
+        verifyNoInteractions(userRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("메시지 전송 완료 시 follow_up이 PENDING이 아니면 FOLLOW_UP_NOT_PENDING 예외가 발생한다")
+    void markMessageTemplateSentFollowUpNotPending() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.COMPLETED)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        assertThatThrownBy(() -> customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_NOT_PENDING);
+
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("DRAFT");
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        verify(customerActivityTimelineRepository, never()).save(any(CustomerActivityTimeline.class));
     }
 
     @Test
