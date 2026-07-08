@@ -38,6 +38,9 @@ public class MessageTemplate {
     @Column(name = "event_target_id", columnDefinition = "uuid")
     private UUID eventTargetId;
 
+    @Column(name = "event_id", columnDefinition = "uuid")
+    private UUID eventId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id", nullable = false)
     private Customer customer;
@@ -57,7 +60,7 @@ public class MessageTemplate {
     @Column(name = "delivery_status", length = 20)
     private String deliveryStatus;
 
-    @Column(name = "scheduled_at", nullable = false)
+    @Column(name = "scheduled_at")
     private OffsetDateTime scheduledAt;
 
     @Column(name = "generated_at", nullable = false)
@@ -71,4 +74,10 @@ public class MessageTemplate {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    public void markSent(OffsetDateTime sentAt) {
+        this.deliveryStatus = "SENT";
+        this.sentAt = sentAt;
+        this.updatedAt = sentAt;
+    }
 }
