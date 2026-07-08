@@ -336,6 +336,67 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("FastAPI 4xx/5xx 실패 시 FAILED 상태와 실패 타임라인만 저장하고 기존 follow_up은 변경하지 않는다")
+    void analyzeConsultationMarksFailedWhenAiServerReturnsError() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        FollowUp existingFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(consultation.getCustomer())
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_ANALYSIS_FAILED));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        assertThat(existingFollowUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue())
+                .containsEntry("status", "FAILED")
+                .containsEntry("errorCode", "AI_ANALYSIS_FAILED");
+        verifyNoSuccessResultSaved();
+    }
+
+    @Test
+    @DisplayName("FastAPI 응답 파싱 실패 시 FAILED 상태와 실패 타임라인만 저장하고 기존 AI 분석값은 변경하지 않는다")
+    void analyzeConsultationMarksFailedWhenAiResponseInvalid() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        CustomerAiInsight existingAiInsight = CustomerAiInsight.builder()
+                .customer(consultation.getCustomer())
+                .leadTemperature("WARM")
+                .temperatureBasis("기존 분석 근거")
+                .priorityScore(70)
+                .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        assertThat(existingAiInsight.getLeadTemperature()).isEqualTo("WARM");
+        assertThat(existingAiInsight.getPriorityScore()).isEqualTo(70);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue())
+                .containsEntry("status", "FAILED")
+                .containsEntry("errorCode", "AI_ANALYSIS_RESPONSE_INVALID");
+        verifyNoSuccessResultSaved();
+    }
+
+    @Test
     @DisplayName("AI 결과 저장 실패 시 성공 저장은 롤백되고 FAILED 상태와 실패 타임라인만 남긴다")
     void analyzeConsultationMarksFailedWhenSaveFails() {
         UUID consultationId = UUID.randomUUID();
