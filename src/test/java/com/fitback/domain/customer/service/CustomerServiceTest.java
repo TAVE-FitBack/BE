@@ -1,10 +1,12 @@
 package com.fitback.domain.customer.service;
 
+import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -29,6 +31,7 @@ import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
 import com.fitback.domain.service.entity.Service;
+import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.store.entity.Store;
 import com.fitback.domain.store.enums.StoreType;
 import com.fitback.domain.user.entity.User;
@@ -40,6 +43,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -50,6 +54,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -81,6 +86,12 @@ class CustomerServiceTest {
     @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
+    @Mock
+    private ServiceRepository serviceRepository;
+
+    @Mock
+    private AiConsultationClient aiConsultationClient;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -93,7 +104,9 @@ class CustomerServiceTest {
                 followUpRepository,
                 followUpAiInsightRepository,
                 messageTemplateRepository,
-                customerActivityTimelineRepository
+                customerActivityTimelineRepository,
+                serviceRepository,
+                aiConsultationClient
         );
     }
 
@@ -463,6 +476,60 @@ class CustomerServiceTest {
         verify(messageTemplateRepository).findFirstByCustomerIdAndFollowUpIdOrderByGeneratedAtDesc(customerId, followUp.getId());
     }
 
+    @Test
+    @DisplayName("재상담 AI 중간분석은 고객과 서비스 검증 후 AI 결과를 저장 없이 반환한다")
+    void checkReconsultationPreview() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Service service = service(serviceId, store, "PT");
+        ReconsultationCheckPreviewRequest request = reconsultationCheckPreviewRequest(
+                serviceId,
+                "기존 고객 재상담 내용입니다."
+        );
+        Map<String, Object> aiResponse = Map.of("overallStatus", "SATISFIED");
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(aiConsultationClient.checkPreview(argThat(aiRequest ->
+                "기존 고객 재상담 내용입니다.".equals(aiRequest.getRawText())
+                        && "PT".equals(aiRequest.getServiceName())
+                        && "김민지".equals(aiRequest.getCustomerInfo().getName())
+                        && Gender.FEMALE == aiRequest.getCustomerInfo().getGender()
+                        && LocalDate.of(2001, 5, 10).equals(aiRequest.getCustomerInfo().getBirthDate())
+        ))).thenReturn(aiResponse);
+
+        Map<String, Object> response = customerService.checkReconsultationPreview(storeId, customerId, request);
+
+        assertThat(response).isEqualTo(aiResponse);
+        verify(customerRepository).findById(customerId);
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+    }
+
+    @Test
+    @DisplayName("재상담 AI 중간분석 시 고객이 다른 매장 소속이면 CUSTOMER_ACCESS_DENIED 예외가 발생한다")
+    void checkReconsultationPreviewCustomerAccessDenied() {
+        UUID storeId = UUID.randomUUID();
+        UUID otherStoreId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        Store otherStore = store(otherStoreId);
+        Customer customer = customer(customerId, otherStore, null, inflowPathOption(UUID.randomUUID(), otherStore));
+        ReconsultationCheckPreviewRequest request = reconsultationCheckPreviewRequest(serviceId, "재상담 내용");
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+
+        assertThatThrownBy(() -> customerService.checkReconsultationPreview(storeId, customerId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+
+        verify(customerRepository).findById(customerId);
+        verifyNoInteractions(serviceRepository, aiConsultationClient);
+    }
+
     private Store store(UUID storeId) {
         return Store.builder()
                 .id(storeId)
@@ -588,5 +655,15 @@ class CustomerServiceTest {
                 .relatedId(consultationId)
                 .occurredAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
                 .build();
+    }
+
+    private ReconsultationCheckPreviewRequest reconsultationCheckPreviewRequest(UUID serviceId, String rawText) {
+        ReconsultationCheckPreviewRequest request = new ReconsultationCheckPreviewRequest();
+        ReconsultationCheckPreviewRequest.ConsultationInfo consultation =
+                new ReconsultationCheckPreviewRequest.ConsultationInfo();
+        ReflectionTestUtils.setField(consultation, "consultedServiceId", serviceId);
+        ReflectionTestUtils.setField(consultation, "rawText", rawText);
+        ReflectionTestUtils.setField(request, "consultation", consultation);
+        return request;
     }
 }
