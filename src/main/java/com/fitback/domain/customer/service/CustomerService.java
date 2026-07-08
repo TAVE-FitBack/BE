@@ -5,9 +5,14 @@ import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationSourceType;
+import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
+import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.CustomerAiInsight;
@@ -15,6 +20,8 @@ import com.fitback.domain.customer.entity.FollowUp;
 import com.fitback.domain.customer.entity.FollowUpAiInsight;
 import com.fitback.domain.customer.entity.MessageTemplate;
 import com.fitback.domain.customer.entity.NonConversionReason;
+import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.FollowUpStatus;
 import com.fitback.domain.customer.exception.CustomerErrorCode;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
@@ -26,11 +33,16 @@ import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
+import com.fitback.domain.user.entity.User;
+import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -52,6 +64,8 @@ public class CustomerService {
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final ServiceRepository serviceRepository;
     private final AiConsultationClient aiConsultationClient;
+    private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -139,6 +153,60 @@ public class CustomerService {
         return aiConsultationClient.checkPreview(aiRequest);
     }
 
+    @Transactional
+    public ReconsultationCreateResponse createReconsultation(
+            UUID storeId,
+            UUID customerId,
+            ReconsultationCreateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        Service service = serviceRepository
+                .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
+
+        User counselor = userRepository
+                .findByIdAndStore_Id(request.getConsultation().getUserId(), storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.COUNSELOR_NOT_FOUND));
+
+        int nextSessionNo = consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId)
+                .map(Consultation::getSessionNo)
+                .orElse(0) + 1;
+
+        Consultation consultation = Consultation.builder()
+                .customer(customer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(request.getConsultation().getConsultedAt())
+                .sessionNo(nextSessionNo)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText(request.getConsultation().getRawText())
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build();
+
+        Consultation savedConsultation = consultationRepository.save(consultation);
+        customer.updateLatestConsultAt(request.getConsultation().getConsultedAt().toLocalDate());
+        saveReconsultationCreatedTimeline(customer, counselor, service, savedConsultation);
+        eventPublisher.publishEvent(new ConsultationCreatedEvent(savedConsultation.getId()));
+
+        return ReconsultationCreateResponse.builder()
+                .customerId(customer.getId())
+                .consultationId(savedConsultation.getId())
+                .sessionNo(savedConsultation.getSessionNo())
+                .aiAnalysisStatus(savedConsultation.getAiAnalysisStatus())
+                .build();
+    }
+
     private CustomerDetailResponse.CustomerInfo toCustomerInfo(Customer customer) {
         Service registeredService = customer.getRegisteredService();
 
@@ -157,6 +225,34 @@ public class CustomerService {
                 .firstConsultAt(customer.getFirstConsultAt())
                 .latestConsultAt(customer.getLatestConsultAt())
                 .build();
+    }
+
+    private void saveReconsultationCreatedTimeline(
+            Customer customer,
+            User counselor,
+            Service service,
+            Consultation consultation
+    ) {
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("consultationId", consultation.getId());
+        afterValue.put("sessionNo", consultation.getSessionNo());
+        afterValue.put("consultedServiceId", service.getId());
+        afterValue.put("consultedAt", consultation.getConsultedAt());
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(counselor)
+                .activityType(CustomerActivityType.RECONSULTATION_CREATED)
+                .title("재상담이 등록되었습니다.")
+                .description(consultation.getSessionNo() + "회차 상담 메모가 저장되었습니다.")
+                .relatedType(ActivityRelatedType.CONSULTATION)
+                .relatedId(consultation.getId())
+                .afterValue(afterValue)
+                .occurredAt(OffsetDateTime.now())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
     }
 
     private CustomerDetailResponse.LatestConsultation toLatestConsultation(Consultation consultation) {

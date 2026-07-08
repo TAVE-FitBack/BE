@@ -5,9 +5,12 @@ import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
+import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.CustomerAiInsight;
@@ -36,6 +39,7 @@ import com.fitback.domain.store.entity.Store;
 import com.fitback.domain.store.enums.StoreType;
 import com.fitback.domain.user.entity.User;
 import com.fitback.domain.user.enums.UserRole;
+import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -43,6 +47,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -54,6 +59,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -92,6 +98,12 @@ class CustomerServiceTest {
     @Mock
     private AiConsultationClient aiConsultationClient;
 
+    @Mock
+    private UserRepository userRepository;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -106,7 +118,9 @@ class CustomerServiceTest {
                 messageTemplateRepository,
                 customerActivityTimelineRepository,
                 serviceRepository,
-                aiConsultationClient
+                aiConsultationClient,
+                userRepository,
+                eventPublisher
         );
     }
 
@@ -530,6 +544,83 @@ class CustomerServiceTest {
         verifyNoInteractions(serviceRepository, aiConsultationClient);
     }
 
+    @Test
+    @DisplayName("재상담 등록은 다음 회차 상담을 저장하고 타임라인 기록 후 AI 분석 이벤트를 발행한다")
+    void createReconsultation() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        UUID latestConsultationId = UUID.randomUUID();
+        UUID newConsultationId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(serviceId, store, "PT");
+        InflowPathOption inflowPathOption = inflowPathOption(UUID.randomUUID(), store);
+        Customer customer = customer(customerId, store, null, inflowPathOption);
+        User counselor = user(counselorId, store, "문형주");
+        Consultation latestConsultation = consultation(
+                latestConsultationId,
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        ReconsultationCreateRequest request = reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00"),
+                "재상담 원문"
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId)).thenReturn(Optional.of(counselor));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(consultationRepository.save(any(Consultation.class))).thenAnswer(invocation -> {
+            Consultation unsaved = invocation.getArgument(0);
+            return Consultation.builder()
+                    .id(newConsultationId)
+                    .customer(unsaved.getCustomer())
+                    .user(unsaved.getUser())
+                    .consultedService(unsaved.getConsultedService())
+                    .consultedAt(unsaved.getConsultedAt())
+                    .sessionNo(unsaved.getSessionNo())
+                    .stage(unsaved.getStage())
+                    .sourceType(unsaved.getSourceType())
+                    .rawText(unsaved.getRawText())
+                    .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
+                    .build();
+        });
+
+        ReconsultationCreateResponse response = customerService.createReconsultation(storeId, customerId, request);
+
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getConsultationId()).isEqualTo(newConsultationId);
+        assertThat(response.getSessionNo()).isEqualTo(3);
+        assertThat(response.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+        assertThat(customer.getLatestConsultAt()).isEqualTo(LocalDate.of(2026, 7, 8));
+        verify(consultationRepository).save(argThat(consultation ->
+                consultation.getCustomer() == customer
+                        && consultation.getUser() == counselor
+                        && consultation.getConsultedService() == service
+                        && consultation.getSessionNo() == 3
+                        && consultation.getStage() == ConsultationStage.CONSULTATION
+                        && consultation.getSourceType() == ConsultationSourceType.DIRECT
+                        && "재상담 원문".equals(consultation.getRawText())
+                        && consultation.getAiAnalysisStatus() == AiAnalysisStatus.PROCESSING
+        ));
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getCustomer() == customer
+                        && timeline.getActorUser() == counselor
+                        && timeline.getActivityType() == CustomerActivityType.RECONSULTATION_CREATED
+                        && timeline.getRelatedType() == ActivityRelatedType.CONSULTATION
+                        && newConsultationId.equals(timeline.getRelatedId())
+        ));
+        verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(newConsultationId));
+    }
+
     private Store store(UUID storeId) {
         return Store.builder()
                 .id(storeId)
@@ -662,6 +753,23 @@ class CustomerServiceTest {
         ReconsultationCheckPreviewRequest.ConsultationInfo consultation =
                 new ReconsultationCheckPreviewRequest.ConsultationInfo();
         ReflectionTestUtils.setField(consultation, "consultedServiceId", serviceId);
+        ReflectionTestUtils.setField(consultation, "rawText", rawText);
+        ReflectionTestUtils.setField(request, "consultation", consultation);
+        return request;
+    }
+
+    private ReconsultationCreateRequest reconsultationCreateRequest(
+            UUID serviceId,
+            UUID counselorId,
+            OffsetDateTime consultedAt,
+            String rawText
+    ) {
+        ReconsultationCreateRequest request = new ReconsultationCreateRequest();
+        ReconsultationCreateRequest.ConsultationInfo consultation =
+                new ReconsultationCreateRequest.ConsultationInfo();
+        ReflectionTestUtils.setField(consultation, "consultedServiceId", serviceId);
+        ReflectionTestUtils.setField(consultation, "consultedAt", consultedAt);
+        ReflectionTestUtils.setField(consultation, "userId", counselorId);
         ReflectionTestUtils.setField(consultation, "rawText", rawText);
         ReflectionTestUtils.setField(request, "consultation", consultation);
         return request;
