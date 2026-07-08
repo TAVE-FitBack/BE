@@ -1,5 +1,6 @@
 package com.fitback.domain.customer.entity;
 
+import com.fitback.domain.customer.enums.MessageDeliveryStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -76,7 +77,7 @@ public class MessageTemplate {
     private OffsetDateTime updatedAt;
 
     public void markSent(OffsetDateTime sentAt) {
-        this.deliveryStatus = "SENT";
+        this.deliveryStatus = MessageDeliveryStatus.SENT.name();
         this.sentAt = sentAt;
         this.updatedAt = sentAt;
     }
