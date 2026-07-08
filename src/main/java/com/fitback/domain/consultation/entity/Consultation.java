@@ -92,6 +92,10 @@ public class Consultation extends BaseTimeEntity {
         this.aiParsedAt = parsedAt;
     }
 
+    public void updateSummary(String summary) {
+        this.summary = summary;
+    }
+
     public void markAiAnalysisFailed() {
         this.aiAnalysisStatus = AiAnalysisStatus.FAILED;
     }

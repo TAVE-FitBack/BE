@@ -7,8 +7,10 @@ import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
+import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
@@ -56,6 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -621,6 +624,74 @@ class CustomerServiceTest {
         verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(newConsultationId));
     }
 
+    @Test
+    @DisplayName("AI 분석값 수동 수정은 최신 상담 요약과 AI 분석값, 이탈요인만 수정하고 follow_up은 유지한다")
+    void updateAiAnalysis() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        CustomerAiInsight aiInsight = CustomerAiInsight.builder()
+                .customer(customer)
+                .leadTemperature("WARM")
+                .temperatureBasis("기존 온도 근거")
+                .priorityScore(70)
+                .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .build();
+        NonConversionReason existingReason = NonConversionReason.builder()
+                .customer(customer)
+                .consultation(latestConsultation)
+                .reasonType("PRICE_BURDEN")
+                .role("PRIMARY")
+                .reasonBasis("기존 가격 부담")
+                .confidence("HIGH")
+                .build();
+        CustomerAiAnalysisUpdateRequest request = aiAnalysisUpdateRequest();
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of(existingReason));
+
+        CustomerAiAnalysisUpdateResponse response = customerService.updateAiAnalysis(storeId, customerId, request);
+
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.isNextActionRegenerationAvailable()).isTrue();
+        assertThat(latestConsultation.getSummary()).isEqualTo("수정된 AI 상담요약");
+        assertThat(aiInsight.getLeadTemperature()).isEqualTo("HOT");
+        assertThat(aiInsight.getTemperatureBasis()).isEqualTo("수정된 온도 근거");
+        assertThat(aiInsight.getPriorityScore()).isEqualTo(70);
+        verify(customerAiInsightRepository).save(aiInsight);
+        verify(nonConversionReasonRepository).deleteAllByCustomerId(customerId);
+        verify(nonConversionReasonRepository).saveAll(argThat(reasons -> {
+            List<NonConversionReason> reasonList = StreamSupport.stream(reasons.spliterator(), false).toList();
+            return reasonList.size() == 1
+                    && "SCHEDULE_CONFLICT".equals(reasonList.get(0).getReasonType())
+                    && "PRIMARY".equals(reasonList.get(0).getRole())
+                    && latestConsultation == reasonList.get(0).getConsultation();
+        }));
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.AI_ANALYSIS_MANUALLY_UPDATED
+                        && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
+                        && customerId.equals(timeline.getRelatedId())
+                        && "PRICE_BURDEN".equals(timeline.getBeforeValue().get("primaryReasonType"))
+                        && "SCHEDULE_CONFLICT".equals(timeline.getAfterValue().get("primaryReasonType"))
+        ));
+        verifyNoInteractions(followUpRepository, followUpAiInsightRepository);
+    }
+
     private Store store(UUID storeId) {
         return Store.builder()
                 .id(storeId)
@@ -772,6 +843,21 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(consultation, "userId", counselorId);
         ReflectionTestUtils.setField(consultation, "rawText", rawText);
         ReflectionTestUtils.setField(request, "consultation", consultation);
+        return request;
+    }
+
+    private CustomerAiAnalysisUpdateRequest aiAnalysisUpdateRequest() {
+        CustomerAiAnalysisUpdateRequest request = new CustomerAiAnalysisUpdateRequest();
+        CustomerAiAnalysisUpdateRequest.NonConversionReasonInfo reason =
+                new CustomerAiAnalysisUpdateRequest.NonConversionReasonInfo();
+        ReflectionTestUtils.setField(reason, "reasonType", "SCHEDULE_CONFLICT");
+        ReflectionTestUtils.setField(reason, "role", "PRIMARY");
+        ReflectionTestUtils.setField(reason, "reasonBasis", "일정 조율이 어렵다고 언급했습니다.");
+        ReflectionTestUtils.setField(reason, "confidence", "MEDIUM");
+        ReflectionTestUtils.setField(request, "summary", "수정된 AI 상담요약");
+        ReflectionTestUtils.setField(request, "leadTemperature", "HOT");
+        ReflectionTestUtils.setField(request, "temperatureBasis", "수정된 온도 근거");
+        ReflectionTestUtils.setField(request, "nonConversionReasons", List.of(reason));
         return request;
     }
 }
