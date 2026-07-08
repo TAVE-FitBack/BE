@@ -8,6 +8,7 @@ import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.service.CustomerService;
@@ -45,6 +46,16 @@ public class CustomerController {
             @PathVariable UUID customerId
     ) {
         CustomerDetailResponse response = customerService.getCustomerDetail(storeId, customerId);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @GetMapping("/{customerId}/message-template/options")
+    @Operation(summary = "메시지 생성 옵션 조회", description = "메시지 초안 생성에 사용할 말투, 길이 버전, 활성 이벤트/혜택 목록을 조회합니다.")
+    public ResponseEntity<ApiResponse<MessageTemplateOptionsResponse>> getMessageTemplateOptions(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @PathVariable UUID customerId
+    ) {
+        MessageTemplateOptionsResponse response = customerService.getMessageTemplateOptions(storeId, customerId);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 
