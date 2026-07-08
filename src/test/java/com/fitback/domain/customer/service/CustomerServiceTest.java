@@ -10,10 +10,12 @@ import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
+import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -804,6 +806,104 @@ class CustomerServiceTest {
         ));
     }
 
+    @Test
+    @DisplayName("고객 상태를 REGISTERED로 변경하면 등록 서비스를 저장하고 기존 PENDING follow_up을 CLOSED 처리한다")
+    void updateCustomerStatusRegisteredClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID registeredServiceId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service registeredService = service(registeredServiceId, store, "정규 PT");
+        Service consultedService = service(UUID.randomUUID(), store, "체험 PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                consultedService,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        CustomerStatusUpdateRequest request = customerStatusUpdateRequest(CustomerStatus.REGISTERED, registeredServiceId);
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(registeredServiceId, storeId))
+                .thenReturn(Optional.of(registeredService));
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(followUp));
+
+        CustomerStatusUpdateResponse response = customerService.updateCustomerStatus(storeId, customerId, request);
+
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getStatus()).isEqualTo(CustomerStatus.REGISTERED);
+        assertThat(response.getFollowUpAction()).isEqualTo("CLOSED");
+        assertThat(response.isNextActionRegenerationAvailable()).isFalse();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.REGISTERED);
+        assertThat(customer.getRegisteredService()).isEqualTo(registeredService);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
+                        && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
+                        && customerId.equals(timeline.getRelatedId())
+                        && CustomerStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
+                        && CustomerStatus.REGISTERED.equals(timeline.getAfterValue().get("status"))
+                        && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
+        ));
+        verifyNoInteractions(customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+    }
+
+    @Test
+    @DisplayName("고객 상태를 NO_SHOW로 변경하면 follow_up은 유지하고 재생성 가능 응답을 반환한다")
+    void updateCustomerStatusNoShowKeepsFollowUpAndReturnsRegenerationAvailable() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        CustomerStatusUpdateRequest request = customerStatusUpdateRequest(CustomerStatus.NO_SHOW, null);
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(followUp));
+
+        CustomerStatusUpdateResponse response = customerService.updateCustomerStatus(storeId, customerId, request);
+
+        assertThat(response.getStatus()).isEqualTo(CustomerStatus.NO_SHOW);
+        assertThat(response.getFollowUpAction()).isEqualTo("REGENERATION_AVAILABLE");
+        assertThat(response.isNextActionRegenerationAvailable()).isTrue();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.NO_SHOW);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+    }
+
     private Store store(UUID storeId) {
         return Store.builder()
                 .id(storeId)
@@ -990,5 +1090,15 @@ class CustomerServiceTest {
                         .actionBasis(Map.of("reason", "일정 조율이 주요 이탈 요인"))
                         .build())
                 .build();
+    }
+
+    private CustomerStatusUpdateRequest customerStatusUpdateRequest(
+            CustomerStatus status,
+            UUID registeredServiceId
+    ) {
+        CustomerStatusUpdateRequest request = new CustomerStatusUpdateRequest();
+        ReflectionTestUtils.setField(request, "status", status);
+        ReflectionTestUtils.setField(request, "registeredServiceId", registeredServiceId);
+        return request;
     }
 }

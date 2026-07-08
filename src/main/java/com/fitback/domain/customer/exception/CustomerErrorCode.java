@@ -20,6 +20,10 @@ public enum CustomerErrorCode implements BaseErrorCode {
     CUSTOMER_ACCESS_DENIED(
             HttpStatus.FORBIDDEN,
             "해당 고객에 접근할 수 없습니다."
+    ),
+    INVALID_CUSTOMER_STATUS(
+            HttpStatus.BAD_REQUEST,
+            "허용되지 않는 고객 상태입니다."
     );
 
     private final HttpStatus httpStatus;

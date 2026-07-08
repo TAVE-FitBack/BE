@@ -12,10 +12,12 @@ import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
+import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -28,6 +30,7 @@ import com.fitback.domain.customer.entity.MessageTemplate;
 import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.CustomerActivityType;
+import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
 import com.fitback.domain.customer.exception.CustomerErrorCode;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
@@ -59,6 +62,9 @@ public class CustomerService {
 
     private static final String NEXT_ACTION_TITLE_KEY = "title";
     private static final String NEXT_ACTION_DESCRIPTION_KEY = "description";
+    private static final String FOLLOW_UP_ACTION_CLOSED = "CLOSED";
+    private static final String FOLLOW_UP_ACTION_KEEP = "KEEP";
+    private static final String FOLLOW_UP_ACTION_REGENERATION_AVAILABLE = "REGENERATION_AVAILABLE";
 
     private final CustomerRepository customerRepository;
     private final ConsultationRepository consultationRepository;
@@ -344,6 +350,60 @@ public class CustomerService {
                 .build();
     }
 
+    @Transactional
+    public CustomerStatusUpdateResponse updateCustomerStatus(
+            UUID storeId,
+            UUID customerId,
+            CustomerStatusUpdateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        Consultation latestConsultation = consultationRepository
+                .findFirstByCustomerIdOrderBySessionNoDesc(customerId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CONSULTATION_NOT_FOUND));
+
+        CustomerStatus beforeStatus = customer.getStatus();
+        CustomerStatus afterStatus = request.getStatus();
+        String followUpAction = resolveFollowUpAction(afterStatus);
+
+        if (afterStatus == CustomerStatus.REGISTERED) {
+            if (request.getRegisteredServiceId() == null) {
+                throw new BusinessException(CustomerErrorCode.INVALID_CUSTOMER_STATUS);
+            }
+            Service registeredService = serviceRepository
+                    .findByIdAndStoreIdAndActiveTrue(request.getRegisteredServiceId(), storeId)
+                    .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
+            customer.markRegistered(registeredService);
+        } else {
+            customer.markStatus(afterStatus);
+        }
+
+        FollowUp activeFollowUp = followUpRepository
+                .findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING)
+                .orElse(null);
+        if (FOLLOW_UP_ACTION_CLOSED.equals(followUpAction) && activeFollowUp != null) {
+            activeFollowUp.markClosed();
+        }
+
+        saveCustomerStatusChangedTimeline(customer, latestConsultation, beforeStatus, afterStatus, followUpAction);
+
+        return CustomerStatusUpdateResponse.builder()
+                .customerId(customer.getId())
+                .status(customer.getStatus())
+                .followUpAction(followUpAction)
+                .nextActionRegenerationAvailable(afterStatus == CustomerStatus.NO_SHOW)
+                .build();
+    }
+
     private CustomerDetailResponse.CustomerInfo toCustomerInfo(Customer customer) {
         Service registeredService = customer.getRegisteredService();
 
@@ -507,6 +567,45 @@ public class CustomerService {
                 .build();
 
         customerActivityTimelineRepository.save(timeline);
+    }
+
+    private void saveCustomerStatusChangedTimeline(
+            Customer customer,
+            Consultation latestConsultation,
+            CustomerStatus beforeStatus,
+            CustomerStatus afterStatus,
+            String followUpAction
+    ) {
+        Map<String, Object> beforeValue = new LinkedHashMap<>();
+        beforeValue.put("status", beforeStatus);
+
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("status", afterStatus);
+        afterValue.put("followUpAction", followUpAction);
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(latestConsultation.getUser())
+                .activityType(CustomerActivityType.CUSTOMER_STATUS_CHANGED)
+                .title("고객 상태가 변경되었습니다.")
+                .description("고객 상태가 " + beforeStatus + "에서 " + afterStatus + "(으)로 변경되었습니다.")
+                .relatedType(ActivityRelatedType.CUSTOMER)
+                .relatedId(customer.getId())
+                .beforeValue(beforeValue)
+                .afterValue(afterValue)
+                .occurredAt(OffsetDateTime.now())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
+    }
+
+    private String resolveFollowUpAction(CustomerStatus status) {
+        return switch (status) {
+            case REGISTERED, LOST -> FOLLOW_UP_ACTION_CLOSED;
+            case PENDING, SCHEDULED -> FOLLOW_UP_ACTION_KEEP;
+            case NO_SHOW -> FOLLOW_UP_ACTION_REGENERATION_AVAILABLE;
+        };
     }
 
     private Map<String, Object> buildFollowUpTimelineValue(FollowUp followUp, String nextActionTitle) {
