@@ -1,13 +1,16 @@
 package com.fitback.domain.customer.controller;
 
+import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.service.CustomerService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,5 +50,17 @@ public class CustomerController {
     ) {
         Map<String, Object> response = customerService.checkReconsultationPreview(storeId, customerId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PostMapping("/{customerId}/consultations")
+    @Operation(summary = "재상담 등록", description = "기존 고객의 새 상담 회차를 저장하고 AI 분석을 비동기로 시작합니다.")
+    public ResponseEntity<ApiResponse<ReconsultationCreateResponse>> createReconsultation(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @PathVariable UUID customerId,
+            @Valid @RequestBody ReconsultationCreateRequest request
+    ) {
+        ReconsultationCreateResponse response = customerService.createReconsultation(storeId, customerId, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(response));
     }
 }
