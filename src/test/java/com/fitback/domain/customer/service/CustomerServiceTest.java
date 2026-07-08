@@ -9,14 +9,19 @@ import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.customer.client.AiMessageClient;
+import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
+import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
+import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -116,6 +121,9 @@ class CustomerServiceTest {
     private AiConsultationClient aiConsultationClient;
 
     @Mock
+    private AiMessageClient aiMessageClient;
+
+    @Mock
     private UserRepository userRepository;
 
     @Mock
@@ -137,6 +145,7 @@ class CustomerServiceTest {
                 eventQueryRepository,
                 serviceRepository,
                 aiConsultationClient,
+                aiMessageClient,
                 userRepository,
                 eventPublisher
         );
@@ -365,6 +374,150 @@ class CustomerServiceTest {
                 messageTemplateRepository,
                 customerActivityTimelineRepository
         );
+    }
+
+    @Test
+    @DisplayName("메시지 초안 생성은 PENDING follow_up 기준으로 AI 메시지를 생성하고 DRAFT 상태로 저장한다")
+    void createMessageTemplate() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                actorUser,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(followUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .memo("부담 적은 시작 옵션 안내")
+                .build();
+        FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
+                .followUp(followUp)
+                .persuasionPoint(Map.of("main", "초기 비용 부담 완화"))
+                .cautionNote("무리한 할인 압박은 피합니다.")
+                .actionBasis(Map.of(
+                        "title", "부담 적은 단기권 옵션 안내",
+                        "description", "큰 패키지보다 시작 부담이 낮은 단기권을 안내합니다."
+                ))
+                .build();
+        CustomerAiInsight aiInsight = CustomerAiInsight.builder()
+                .customer(customer)
+                .leadTemperature("WARM")
+                .priorityScore(82)
+                .build();
+        NonConversionReason reason = NonConversionReason.builder()
+                .customer(customer)
+                .consultation(latestConsultation)
+                .reasonType("PRICE_BURDEN")
+                .role("PRIMARY")
+                .reasonBasis("가격을 부담스러워했습니다.")
+                .build();
+        EventQueryRepository.EventOptionRow event = new EventQueryRepository.EventOptionRow(
+                eventId,
+                "7월 PT 등록 이벤트",
+                "DISCOUNT",
+                "PT 첫 달 10% 할인",
+                BigDecimal.valueOf(10.0),
+                LocalDate.of(2026, 7, 1),
+                LocalDate.of(2026, 7, 31)
+        );
+        MessageTemplateCreateRequest request = messageTemplateCreateRequest(
+                followUpId,
+                MessageTonePreset.FRIENDLY,
+                MessageVersionType.STANDARD,
+                eventId,
+                "처음 시작 부담이 적다는 점을 강조해주세요."
+        );
+        AiMessageGenerateResponse aiResponse = AiMessageGenerateResponse.builder()
+                .content("안녕하세요 김민지님, 이번 달 PT 할인 혜택을 안내드립니다.")
+                .tonePreset(MessageTonePreset.FRIENDLY)
+                .versionType(MessageVersionType.STANDARD)
+                .build();
+        MessageTemplate savedMessageTemplate = MessageTemplate.builder()
+                .id(messageTemplateId)
+                .followUp(followUp)
+                .eventId(eventId)
+                .customer(customer)
+                .content(aiResponse.getContent())
+                .versionType(MessageVersionType.STANDARD.name())
+                .tonePreset(MessageTonePreset.FRIENDLY.name())
+                .deliveryStatus("DRAFT")
+                .generatedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
+                .updatedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
+                .build();
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+        when(followUpRepository.findById(followUpId)).thenReturn(Optional.of(followUp));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(followUpAiInsightRepository.findById(followUpId)).thenReturn(Optional.of(followUpAiInsight));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of(reason));
+        when(eventQueryRepository.findActiveEventByIdAndStoreId(eventId, storeId)).thenReturn(Optional.of(event));
+        when(aiMessageClient.generateMessage(any(AiMessageGenerateRequest.class))).thenReturn(aiResponse);
+        when(messageTemplateRepository.save(any(MessageTemplate.class))).thenReturn(savedMessageTemplate);
+
+        MessageTemplateCreateResponse response = customerService.createMessageTemplate(
+                storeId,
+                userId,
+                customerId,
+                request
+        );
+
+        assertThat(response.getMessageTemplateId()).isEqualTo(messageTemplateId);
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getFollowUpId()).isEqualTo(followUpId);
+        assertThat(response.getContent()).isEqualTo(aiResponse.getContent());
+        assertThat(response.getTonePreset()).isEqualTo(MessageTonePreset.FRIENDLY);
+        assertThat(response.getVersionType()).isEqualTo(MessageVersionType.STANDARD);
+        assertThat(response.getDeliveryStatus().name()).isEqualTo("DRAFT");
+
+        verify(aiMessageClient).generateMessage(argThat(aiRequest ->
+                customerId.equals(aiRequest.getCustomer().getCustomerId())
+                        && "김민지".equals(aiRequest.getCustomer().getName())
+                        && latestConsultation.getId().equals(aiRequest.getLatestConsultation().getConsultationId())
+                        && "WARM".equals(aiRequest.getAiInsight().getLeadTemperature())
+                        && Integer.valueOf(82).equals(aiRequest.getAiInsight().getPriorityScore())
+                        && aiRequest.getNonConversionReasons().size() == 1
+                        && "PRICE_BURDEN".equals(aiRequest.getNonConversionReasons().get(0).getReasonType())
+                        && "부담 적은 단기권 옵션 안내".equals(aiRequest.getNextBestAction().getTitle())
+                        && eventId.equals(aiRequest.getEvent().getEventId())
+                        && aiRequest.getMessageOptions().getTonePreset() == MessageTonePreset.FRIENDLY
+                        && aiRequest.getMessageOptions().getVersionType() == MessageVersionType.STANDARD
+        ));
+        verify(messageTemplateRepository).save(argThat(messageTemplate ->
+                messageTemplate.getCustomer() == customer
+                        && messageTemplate.getFollowUp() == followUp
+                        && eventId.equals(messageTemplate.getEventId())
+                        && messageTemplate.getScheduledAt() == null
+                        && "DRAFT".equals(messageTemplate.getDeliveryStatus())
+                        && MessageTonePreset.FRIENDLY.name().equals(messageTemplate.getTonePreset())
+                        && MessageVersionType.STANDARD.name().equals(messageTemplate.getVersionType())
+        ));
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.MESSAGE_TEMPLATE_CREATED
+                        && timeline.getRelatedType() == ActivityRelatedType.MESSAGE_TEMPLATE
+                        && messageTemplateId.equals(timeline.getRelatedId())
+                        && actorUser == timeline.getActorUser()
+                        && messageTemplateId.equals(timeline.getAfterValue().get("messageTemplateId"))
+                        && followUpId.equals(timeline.getAfterValue().get("followUpId"))
+        ));
     }
 
     @Test
@@ -1068,6 +1221,22 @@ class CustomerServiceTest {
                 .generatedAt(generatedAt)
                 .updatedAt(generatedAt)
                 .build();
+    }
+
+    private MessageTemplateCreateRequest messageTemplateCreateRequest(
+            UUID followUpId,
+            MessageTonePreset tonePreset,
+            MessageVersionType versionType,
+            UUID eventId,
+            String additionalInstruction
+    ) {
+        MessageTemplateCreateRequest request = new MessageTemplateCreateRequest();
+        ReflectionTestUtils.setField(request, "followUpId", followUpId);
+        ReflectionTestUtils.setField(request, "tonePreset", tonePreset);
+        ReflectionTestUtils.setField(request, "versionType", versionType);
+        ReflectionTestUtils.setField(request, "eventId", eventId);
+        ReflectionTestUtils.setField(request, "additionalInstruction", additionalInstruction);
+        return request;
     }
 
     private CustomerActivityTimeline timeline(

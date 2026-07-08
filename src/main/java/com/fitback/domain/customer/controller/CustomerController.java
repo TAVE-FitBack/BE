@@ -2,12 +2,14 @@ package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
+import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -57,6 +59,24 @@ public class CustomerController {
     ) {
         MessageTemplateOptionsResponse response = customerService.getMessageTemplateOptions(storeId, customerId);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PostMapping("/{customerId}/message-templates")
+    @Operation(summary = "메시지 초안 생성", description = "현재 후속 연락과 다음 최적 액션을 기준으로 AI 메시지 초안을 생성합니다.")
+    public ResponseEntity<ApiResponse<MessageTemplateCreateResponse>> createMessageTemplate(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @PathVariable UUID customerId,
+            @Valid @RequestBody MessageTemplateCreateRequest request
+    ) {
+        MessageTemplateCreateResponse response = customerService.createMessageTemplate(
+                storeId,
+                userId,
+                customerId,
+                request
+        );
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(response));
     }
 
     @PostMapping("/{customerId}/consultations/check-preview")
