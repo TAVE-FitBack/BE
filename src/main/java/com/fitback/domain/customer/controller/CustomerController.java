@@ -1,10 +1,12 @@
 package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.service.CustomerService;
 import com.fitback.global.response.ApiResponse;
@@ -75,6 +77,17 @@ public class CustomerController {
             @Valid @RequestBody CustomerAiAnalysisUpdateRequest request
     ) {
         CustomerAiAnalysisUpdateResponse response = customerService.updateAiAnalysis(storeId, customerId, request);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PostMapping("/{customerId}/next-action/regenerate")
+    @Operation(summary = "다음 최적 액션 재생성", description = "최신 고객/상담/AI 분석값을 기준으로 다음 최적 액션을 수동 재생성합니다.")
+    public ResponseEntity<ApiResponse<NextActionRegenerateResponse>> regenerateNextAction(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @PathVariable UUID customerId,
+            @RequestBody NextActionRegenerateRequest request
+    ) {
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(storeId, customerId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }
