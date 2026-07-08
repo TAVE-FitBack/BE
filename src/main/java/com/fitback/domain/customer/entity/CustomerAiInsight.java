@@ -53,4 +53,14 @@ public class CustomerAiInsight extends BaseTimeEntity {
         this.priorityScore = priorityScore;
         this.analyzedAt = analyzedAt;
     }
+
+    public void updateManualAnalysis(String leadTemperature, String temperatureBasis) {
+        this.leadTemperature = leadTemperature;
+        this.temperatureBasis = temperatureBasis;
+    }
+
+    public void updatePriorityScore(Integer priorityScore, OffsetDateTime analyzedAt) {
+        this.priorityScore = priorityScore;
+        this.analyzedAt = analyzedAt;
+    }
 }

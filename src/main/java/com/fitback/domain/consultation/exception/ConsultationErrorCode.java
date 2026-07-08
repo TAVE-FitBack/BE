@@ -21,6 +21,10 @@ public enum ConsultationErrorCode implements BaseErrorCode {
             HttpStatus.NOT_FOUND,
             "고객 정보를 찾을 수 없습니다."
     ),
+    CONSULTATION_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "상담 정보를 찾을 수 없습니다."
+    ),
     COUNSELOR_NOT_FOUND(
             HttpStatus.NOT_FOUND,
             "상담자를 찾을 수 없습니다."

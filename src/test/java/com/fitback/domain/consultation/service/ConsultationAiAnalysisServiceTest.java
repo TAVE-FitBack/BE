@@ -208,6 +208,63 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("재상담 회차도 기존 AI 분석 저장 로직을 재사용해 FastAPI 요청과 후속관리 교체를 처리한다")
+    void analyzeReconsultationReusesAnalysisFlow() {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customer();
+        Service service = service();
+        Consultation reconsultation = Consultation.builder()
+                .id(consultationId)
+                .customer(customer)
+                .user(user(customer.getStore()))
+                .consultedService(service)
+                .consultedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
+                .sessionNo(2)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("재상담 원문")
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build();
+        FollowUp existingFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(reconsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 7))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(reconsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(reconsultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
+                customer.getId(),
+                FollowUpStatus.PENDING
+        )).thenReturn(Optional.of(existingFollowUp));
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        ArgumentCaptor<AiConsultationAnalyzeRequest> requestCaptor = ArgumentCaptor.forClass(AiConsultationAnalyzeRequest.class);
+        verify(aiConsultationClient).analyzeConsultation(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().getConsultation().getConsultationId()).isEqualTo(consultationId);
+        assertThat(requestCaptor.getValue().getConsultation().getSessionNo()).isEqualTo(2);
+        assertThat(requestCaptor.getValue().getConsultation().getRawText()).isEqualTo("재상담 원문");
+        assertThat(requestCaptor.getValue().getService().getServiceName()).isEqualTo("PT");
+        assertThat(reconsultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.COMPLETED);
+        assertThat(existingFollowUp.getStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
+        verify(nonConversionReasonRepository).deleteAllByCustomerId(customer.getId());
+        verify(followUpAiInsightRepository).save(any(FollowUpAiInsight.class));
+        verify(customerActivityTimelineRepository, org.mockito.Mockito.times(2)).save(any(CustomerActivityTimeline.class));
+    }
+
+    @Test
     @DisplayName("상담이 없으면 로그만 남기고 상태 변경 없이 중단한다")
     void analyzeConsultationSkipsWhenConsultationNotFound() {
         UUID consultationId = UUID.randomUUID();
@@ -275,6 +332,67 @@ class ConsultationAiAnalysisServiceTest {
         assertThat(timelineCaptor.getValue().getAfterValue())
                 .containsEntry("status", "FAILED")
                 .containsEntry("errorCode", "AI_ANALYSIS_REQUEST_FAILED");
+        verifyNoSuccessResultSaved();
+    }
+
+    @Test
+    @DisplayName("FastAPI 4xx/5xx 실패 시 FAILED 상태와 실패 타임라인만 저장하고 기존 follow_up은 변경하지 않는다")
+    void analyzeConsultationMarksFailedWhenAiServerReturnsError() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        FollowUp existingFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(consultation.getCustomer())
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_ANALYSIS_FAILED));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        assertThat(existingFollowUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue())
+                .containsEntry("status", "FAILED")
+                .containsEntry("errorCode", "AI_ANALYSIS_FAILED");
+        verifyNoSuccessResultSaved();
+    }
+
+    @Test
+    @DisplayName("FastAPI 응답 파싱 실패 시 FAILED 상태와 실패 타임라인만 저장하고 기존 AI 분석값은 변경하지 않는다")
+    void analyzeConsultationMarksFailedWhenAiResponseInvalid() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        CustomerAiInsight existingAiInsight = CustomerAiInsight.builder()
+                .customer(consultation.getCustomer())
+                .leadTemperature("WARM")
+                .temperatureBasis("기존 분석 근거")
+                .priorityScore(70)
+                .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
+                .thenThrow(new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.FAILED);
+        assertThat(existingAiInsight.getLeadTemperature()).isEqualTo("WARM");
+        assertThat(existingAiInsight.getPriorityScore()).isEqualTo(70);
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_FAILED);
+        assertThat(timelineCaptor.getValue().getAfterValue())
+                .containsEntry("status", "FAILED")
+                .containsEntry("errorCode", "AI_ANALYSIS_RESPONSE_INVALID");
         verifyNoSuccessResultSaved();
     }
 

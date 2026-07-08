@@ -73,4 +73,8 @@ public class Customer extends BaseTimeEntity {
         this.status = status;
         this.registeredService = null;
     }
+
+    public void updateLatestConsultAt(LocalDate latestConsultAt) {
+        this.latestConsultAt = latestConsultAt;
+    }
 }

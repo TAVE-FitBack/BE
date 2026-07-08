@@ -60,4 +60,8 @@ public class FollowUp extends BaseTimeEntity {
     public void markSuperseded() {
         this.status = FollowUpStatus.SUPERSEDED;
     }
+
+    public void markClosed() {
+        this.status = FollowUpStatus.CLOSED;
+    }
 }

@@ -2,7 +2,9 @@ package com.fitback.domain.consultation.client;
 
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
+import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
+import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.global.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +27,7 @@ public class AiConsultationClient {
 
     private static final String CHECK_PREVIEW_PATH = "/ai/v1/consultations/check-preview";
     private static final String ANALYZE_PATH = "/ai/v1/consultations/analyze";
+    private static final String NEXT_ACTION_PATH = "/ai/v1/consultations/next-action";
 
     private final RestClient restClient;
 
@@ -83,11 +86,49 @@ public class AiConsultationClient {
         }
     }
 
+    public AiNextActionRegenerateResponse regenerateNextAction(AiNextActionRegenerateRequest request) {
+        try {
+            AiNextActionRegenerateResponse response = restClient.post()
+                    .uri(NEXT_ACTION_PATH)
+                    .body(request)
+                    .retrieve()
+                    .body(AiNextActionRegenerateResponse.class);
+            validateNextActionResponse(response);
+            return response;
+        } catch (ResourceAccessException e) {
+            log.warn("AI next-action request failed", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_REQUEST_FAILED);
+        } catch (RestClientResponseException e) {
+            log.warn("AI next-action returned error status. status={}", e.getStatusCode(), e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_FAILED);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (HttpMessageConversionException e) {
+            log.warn("AI next-action response parsing failed", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        } catch (RestClientException | IllegalArgumentException e) {
+            log.warn("AI next-action response invalid", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        }
+    }
+
     private void validateAnalyzeResponse(AiConsultationAnalyzeResponse response) {
         if (response == null
                 || !hasText(response.getSummary())
                 || response.getCustomerInsight() == null
                 || !hasText(response.getCustomerInsight().getLeadTemperature())
+                || response.getNextBestAction() == null
+                || !hasText(response.getNextBestAction().getTitle())
+                || !hasText(response.getNextBestAction().getDescription())
+                || response.getFollowUp() == null
+                || response.getFollowUp().getRecommendContactDate() == null) {
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        }
+    }
+
+    private void validateNextActionResponse(AiNextActionRegenerateResponse response) {
+        if (response == null
+                || response.getPriorityScore() == null
                 || response.getNextBestAction() == null
                 || !hasText(response.getNextBestAction().getTitle())
                 || !hasText(response.getNextBestAction().getDescription())
