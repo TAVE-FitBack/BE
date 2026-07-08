@@ -1,10 +1,12 @@
 package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
+import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
@@ -88,6 +90,17 @@ public class CustomerController {
             @RequestBody NextActionRegenerateRequest request
     ) {
         NextActionRegenerateResponse response = customerService.regenerateNextAction(storeId, customerId, request);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PatchMapping("/{customerId}/status")
+    @Operation(summary = "고객 상태 변경", description = "고객 상태를 변경하고 상태에 따라 후속관리 상태를 연동합니다.")
+    public ResponseEntity<ApiResponse<CustomerStatusUpdateResponse>> updateCustomerStatus(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @PathVariable UUID customerId,
+            @Valid @RequestBody CustomerStatusUpdateRequest request
+    ) {
+        CustomerStatusUpdateResponse response = customerService.updateCustomerStatus(storeId, customerId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }
