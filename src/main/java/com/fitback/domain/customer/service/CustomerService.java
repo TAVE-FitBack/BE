@@ -2,6 +2,8 @@ package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
+import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
@@ -10,10 +12,12 @@ import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -273,6 +277,73 @@ public class CustomerService {
                 .build();
     }
 
+    @Transactional
+    public NextActionRegenerateResponse regenerateNextAction(
+            UUID storeId,
+            UUID customerId,
+            NextActionRegenerateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        Consultation latestConsultation = consultationRepository
+                .findFirstByCustomerIdOrderBySessionNoDesc(customerId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CONSULTATION_NOT_FOUND));
+
+        CustomerAiInsight customerAiInsight = customerAiInsightRepository.findById(customerId)
+                .orElseGet(() -> CustomerAiInsight.builder()
+                        .customer(customer)
+                        .build());
+        List<NonConversionReason> reasons = nonConversionReasonRepository
+                .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
+
+        AiNextActionRegenerateResponse aiResponse = aiConsultationClient.regenerateNextAction(
+                buildNextActionAiRequest(customer, latestConsultation, customerAiInsight, reasons)
+        );
+
+        FollowUp oldFollowUp = followUpRepository
+                .findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING)
+                .orElse(null);
+        Map<String, Object> oldFollowUpBeforeValue = oldFollowUp != null
+                ? buildFollowUpTimelineValue(oldFollowUp, null)
+                : null;
+        if (oldFollowUp != null) {
+            oldFollowUp.markSuperseded();
+        }
+
+        FollowUp newFollowUp = FollowUp.builder()
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(aiResponse.getFollowUp().getRecommendContactDate())
+                .status(FollowUpStatus.PENDING)
+                .memo(resolveNextActionMemo(aiResponse))
+                .build();
+        FollowUp savedFollowUp = followUpRepository.save(newFollowUp);
+
+        saveRegeneratedFollowUpAiInsight(savedFollowUp, aiResponse);
+        customerAiInsight.updatePriorityScore(aiResponse.getPriorityScore(), OffsetDateTime.now());
+        customerAiInsightRepository.save(customerAiInsight);
+        saveNextActionRegeneratedTimeline(customer, latestConsultation, oldFollowUpBeforeValue, savedFollowUp, aiResponse);
+
+        return NextActionRegenerateResponse.builder()
+                .customerId(customer.getId())
+                .oldFollowUpId(oldFollowUp != null ? oldFollowUp.getId() : null)
+                .oldFollowUpStatus(oldFollowUp != null ? oldFollowUp.getStatus() : null)
+                .newFollowUpId(savedFollowUp.getId())
+                .newFollowUpStatus(savedFollowUp.getStatus())
+                .recommendContactDate(savedFollowUp.getRecommendContactDate())
+                .priorityScore(aiResponse.getPriorityScore())
+                .build();
+    }
+
     private CustomerDetailResponse.CustomerInfo toCustomerInfo(Customer customer) {
         Service registeredService = customer.getRegisteredService();
 
@@ -342,6 +413,109 @@ public class CustomerService {
                 .build();
 
         customerActivityTimelineRepository.save(timeline);
+    }
+
+    private AiNextActionRegenerateRequest buildNextActionAiRequest(
+            Customer customer,
+            Consultation latestConsultation,
+            CustomerAiInsight customerAiInsight,
+            List<NonConversionReason> reasons
+    ) {
+        return AiNextActionRegenerateRequest.builder()
+                .customer(AiNextActionRegenerateRequest.CustomerInfo.builder()
+                        .customerId(customer.getId())
+                        .status(customer.getStatus())
+                        .build())
+                .latestConsultation(AiNextActionRegenerateRequest.LatestConsultationInfo.builder()
+                        .consultationId(latestConsultation.getId())
+                        .summary(latestConsultation.getSummary())
+                        .rawText(latestConsultation.getRawText())
+                        .build())
+                .aiAnalysis(AiNextActionRegenerateRequest.AiAnalysisInfo.builder()
+                        .leadTemperature(customerAiInsight.getLeadTemperature())
+                        .temperatureBasis(customerAiInsight.getTemperatureBasis())
+                        .nonConversionReasons(reasons.stream()
+                                .map(reason -> AiNextActionRegenerateRequest.NonConversionReasonInfo.builder()
+                                        .reasonType(reason.getReasonType())
+                                        .role(reason.getRole())
+                                        .reasonBasis(reason.getReasonBasis())
+                                        .build())
+                                .toList())
+                        .build())
+                .build();
+    }
+
+    private void saveRegeneratedFollowUpAiInsight(
+            FollowUp followUp,
+            AiNextActionRegenerateResponse aiResponse
+    ) {
+        AiNextActionRegenerateResponse.FollowUpInsight insight = aiResponse.getFollowUpInsight();
+        Map<String, Object> persuasionPoint = insight != null && insight.getPersuasionPoint() != null
+                ? insight.getPersuasionPoint()
+                : Map.of();
+        Map<String, Object> actionBasis = buildRegeneratedActionBasis(aiResponse);
+
+        followUpAiInsightRepository.save(FollowUpAiInsight.builder()
+                .followUp(followUp)
+                .persuasionPoint(persuasionPoint)
+                .cautionNote(insight != null ? insight.getCautionNote() : null)
+                .actionBasis(actionBasis)
+                .analyzedAt(OffsetDateTime.now())
+                .build());
+    }
+
+    private Map<String, Object> buildRegeneratedActionBasis(AiNextActionRegenerateResponse aiResponse) {
+        Map<String, Object> actionBasis = new LinkedHashMap<>();
+        AiNextActionRegenerateResponse.FollowUpInsight insight = aiResponse.getFollowUpInsight();
+        if (insight != null && insight.getActionBasis() != null) {
+            actionBasis.putAll(insight.getActionBasis());
+        }
+        actionBasis.put(NEXT_ACTION_TITLE_KEY, aiResponse.getNextBestAction().getTitle());
+        actionBasis.put(NEXT_ACTION_DESCRIPTION_KEY, aiResponse.getNextBestAction().getDescription());
+        return actionBasis;
+    }
+
+    private String resolveNextActionMemo(AiNextActionRegenerateResponse aiResponse) {
+        String memo = aiResponse.getFollowUp().getMemo();
+        if (memo != null && !memo.isBlank()) {
+            return memo;
+        }
+        return aiResponse.getNextBestAction().getTitle();
+    }
+
+    private void saveNextActionRegeneratedTimeline(
+            Customer customer,
+            Consultation latestConsultation,
+            Map<String, Object> beforeValue,
+            FollowUp newFollowUp,
+            AiNextActionRegenerateResponse aiResponse
+    ) {
+        Map<String, Object> afterValue = buildFollowUpTimelineValue(newFollowUp, aiResponse.getNextBestAction().getTitle());
+
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .store(customer.getStore())
+                .customer(customer)
+                .actorUser(latestConsultation.getUser())
+                .activityType(CustomerActivityType.NEXT_ACTION_REGENERATED)
+                .title("다음 최적 액션이 재생성되었습니다.")
+                .description("수정된 AI 분석값을 기준으로 후속 연락 일정과 실행 액션이 새로 생성되었습니다.")
+                .relatedType(ActivityRelatedType.FOLLOW_UP)
+                .relatedId(newFollowUp.getId())
+                .beforeValue(beforeValue)
+                .afterValue(afterValue)
+                .occurredAt(OffsetDateTime.now())
+                .build();
+
+        customerActivityTimelineRepository.save(timeline);
+    }
+
+    private Map<String, Object> buildFollowUpTimelineValue(FollowUp followUp, String nextActionTitle) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("followUpId", followUp.getId());
+        value.put("status", followUp.getStatus());
+        value.put("recommendContactDate", followUp.getRecommendContactDate());
+        value.put("nextActionTitle", nextActionTitle);
+        return value;
     }
 
     private Map<String, Object> buildAiAnalysisTimelineValue(

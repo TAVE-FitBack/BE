@@ -1,6 +1,8 @@
 package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
+import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
@@ -8,10 +10,12 @@ import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.NextActionRegenerateResponse;
 import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -692,6 +696,114 @@ class CustomerServiceTest {
         verifyNoInteractions(followUpRepository, followUpAiInsightRepository);
     }
 
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최신 분석값으로 AI를 호출하고 기존 PENDING을 대체한 뒤 새 PENDING을 저장한다")
+    void regenerateNextAction() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID oldFollowUpId = UUID.randomUUID();
+        UUID newFollowUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        CustomerAiInsight aiInsight = CustomerAiInsight.builder()
+                .customer(customer)
+                .leadTemperature("HOT")
+                .temperatureBasis("수정된 온도 근거")
+                .priorityScore(70)
+                .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .build();
+        NonConversionReason reason = NonConversionReason.builder()
+                .customer(customer)
+                .consultation(latestConsultation)
+                .reasonType("SCHEDULE_CONFLICT")
+                .role("PRIMARY")
+                .reasonBasis("일정 조율이 어렵다고 언급했습니다.")
+                .confidence("MEDIUM")
+                .build();
+        FollowUp oldFollowUp = FollowUp.builder()
+                .id(oldFollowUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 8))
+                .status(FollowUpStatus.PENDING)
+                .build();
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(newFollowUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .memo("새 액션")
+                .build();
+        AiNextActionRegenerateResponse aiResponse = nextActionAiResponse();
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of(reason));
+        when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class))).thenReturn(aiResponse);
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(oldFollowUp));
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                storeId,
+                customerId,
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getOldFollowUpId()).isEqualTo(oldFollowUpId);
+        assertThat(response.getOldFollowUpStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
+        assertThat(response.getNewFollowUpId()).isEqualTo(newFollowUpId);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        assertThat(response.getRecommendContactDate()).isEqualTo(LocalDate.of(2026, 7, 10));
+        assertThat(response.getPriorityScore()).isEqualTo(82);
+        assertThat(oldFollowUp.getStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
+        assertThat(aiInsight.getPriorityScore()).isEqualTo(82);
+
+        verify(aiConsultationClient).regenerateNextAction(argThat(aiRequest ->
+                customerId.equals(aiRequest.getCustomer().getCustomerId())
+                        && customer.getStatus() == aiRequest.getCustomer().getStatus()
+                        && latestConsultation.getId().equals(aiRequest.getLatestConsultation().getConsultationId())
+                        && latestConsultation.getSummary().equals(aiRequest.getLatestConsultation().getSummary())
+                        && "HOT".equals(aiRequest.getAiAnalysis().getLeadTemperature())
+                        && aiRequest.getAiAnalysis().getNonConversionReasons().size() == 1
+                        && "SCHEDULE_CONFLICT".equals(aiRequest.getAiAnalysis().getNonConversionReasons().get(0).getReasonType())
+        ));
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getCustomer() == customer
+                        && followUp.getConsultation() == latestConsultation
+                        && followUp.getStatus() == FollowUpStatus.PENDING
+                        && LocalDate.of(2026, 7, 10).equals(followUp.getRecommendContactDate())
+        ));
+        verify(followUpAiInsightRepository).save(argThat(insight ->
+                insight.getFollowUp() == savedFollowUp
+                        && "새 액션".equals(insight.getActionBasis().get("title"))
+                        && "새 설명".equals(insight.getActionBasis().get("description"))
+        ));
+        verify(customerAiInsightRepository).save(aiInsight);
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.NEXT_ACTION_REGENERATED
+                        && timeline.getRelatedType() == ActivityRelatedType.FOLLOW_UP
+                        && newFollowUpId.equals(timeline.getRelatedId())
+                        && FollowUpStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
+                        && FollowUpStatus.PENDING.equals(timeline.getAfterValue().get("status"))
+        ));
+    }
+
     private Store store(UUID storeId) {
         return Store.builder()
                 .id(storeId)
@@ -859,5 +971,24 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(request, "temperatureBasis", "수정된 온도 근거");
         ReflectionTestUtils.setField(request, "nonConversionReasons", List.of(reason));
         return request;
+    }
+
+    private AiNextActionRegenerateResponse nextActionAiResponse() {
+        return AiNextActionRegenerateResponse.builder()
+                .priorityScore(82)
+                .nextBestAction(AiNextActionRegenerateResponse.NextBestAction.builder()
+                        .title("새 액션")
+                        .description("새 설명")
+                        .build())
+                .followUp(AiNextActionRegenerateResponse.FollowUp.builder()
+                        .recommendContactDate(LocalDate.of(2026, 7, 10))
+                        .memo("새 액션")
+                        .build())
+                .followUpInsight(AiNextActionRegenerateResponse.FollowUpInsight.builder()
+                        .persuasionPoint(Map.of("main", "일정 부담 완화"))
+                        .cautionNote("일정 압박은 피합니다.")
+                        .actionBasis(Map.of("reason", "일정 조율이 주요 이탈 요인"))
+                        .build())
+                .build();
     }
 }
