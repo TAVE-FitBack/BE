@@ -1,7 +1,9 @@
 package com.fitback.domain.customer.service;
 
 import com.fitback.domain.customer.dto.request.ConsultationListQuery;
+import com.fitback.domain.customer.dto.request.InquiryListQuery;
 import com.fitback.domain.customer.dto.response.CustomerManagementConsultationListResponse;
+import com.fitback.domain.customer.dto.response.CustomerManagementInquiryListResponse;
 import com.fitback.domain.customer.dto.response.CustomerManagementSummaryResponse;
 import com.fitback.domain.customer.exception.CustomerManagementErrorCode;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
@@ -10,11 +12,15 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationSearchCondition;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InflowPathCountRow;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryPageRows;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryRow;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquirySearchCondition;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.NonConversionReasonRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ServiceCountRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator.MonthRange;
+import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import org.junit.jupiter.api.DisplayName;
@@ -28,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,6 +54,8 @@ class CustomerManagementServiceTest {
     private InflowPathOptionRepository inflowPathOptionRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private AiInquiryClient aiInquiryClient;
 
     @InjectMocks
     private CustomerManagementService customerManagementService;
@@ -246,5 +255,110 @@ class CustomerManagementServiceTest {
                 .isEqualTo(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
 
         verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("문의 목록은 문의 한 건당 한 행과 100자 원문 미리보기를 반환한다")
+    void getInquiries() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        InquiryListQuery query = new InquiryListQuery();
+        query.setMonth("2026-10");
+        query.setKeyword(" 김문의 ");
+        query.setGender("female");
+        query.setInquiryStatus("visit_scheduled");
+        query.setPage(0);
+        query.setSize(10);
+        InquiryRow row = new InquiryRow(
+                inquiryId,
+                "김문의",
+                "010-1111-2222",
+                "FEMALE",
+                LocalDate.of(2000, 2, 3),
+                serviceId,
+                "PT",
+                inflowPathId,
+                "워크인",
+                "가".repeat(101),
+                "VISIT_SCHEDULED",
+                OffsetDateTime.parse("2026-10-12T11:00:00+09:00"),
+                OffsetDateTime.parse("2026-10-15T15:00:00+09:00"),
+                counselorId,
+                "이담당",
+                null,
+                null
+        );
+        when(queryRepository.findInquiries(
+                org.mockito.ArgumentMatchers.eq(storeId),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(10)
+        )).thenReturn(new InquiryPageRows(List.of(row), 11));
+
+        CustomerManagementInquiryListResponse response =
+                customerManagementService.getInquiries(storeId, query);
+
+        assertThat(response.getTotalElements()).isEqualTo(11);
+        assertThat(response.getTotalPages()).isEqualTo(2);
+        assertThat(response.isHasNext()).isTrue();
+        assertThat(response.getContent()).singleElement().satisfies(item -> {
+            assertThat(item.getInquiryId()).isEqualTo(inquiryId);
+            assertThat(item.getMemo()).isEqualTo("가".repeat(100) + "…");
+            assertThat(item.getInquiryStatus().name()).isEqualTo("VISIT_SCHEDULED");
+            assertThat(item.getInquiryStatusName()).isEqualTo("방문 예정");
+            assertThat(item.isConverted()).isFalse();
+            assertThat(item.getConvertedCustomerId()).isNull();
+            assertThat(item.getConvertedConsultationId()).isNull();
+        });
+
+        ArgumentCaptor<InquirySearchCondition> conditionCaptor =
+                ArgumentCaptor.forClass(InquirySearchCondition.class);
+        verify(queryRepository).findInquiries(
+                org.mockito.ArgumentMatchers.eq(storeId),
+                org.mockito.ArgumentMatchers.any(),
+                conditionCaptor.capture(),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(10)
+        );
+        assertThat(conditionCaptor.getValue().keyword()).isEqualTo("김문의");
+        assertThat(conditionCaptor.getValue().gender()).isEqualTo("FEMALE");
+        assertThat(conditionCaptor.getValue().inquiryStatus()).isEqualTo("VISIT_SCHEDULED");
+        verifyNoInteractions(aiInquiryClient);
+    }
+
+    @Test
+    @DisplayName("CONVERTED 문의 상태는 목록 필터로 허용하지 않는다")
+    void rejectConvertedInquiryFilter() {
+        InquiryListQuery query = new InquiryListQuery();
+        query.setInquiryStatus("CONVERTED");
+
+        assertThatThrownBy(() -> customerManagementService.getInquiries(UUID.randomUUID(), query))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
+
+        verifyNoInteractions(queryRepository, aiInquiryClient);
+    }
+
+    @Test
+    @DisplayName("문의 목록 필터 ID는 로그인 사용자의 매장 범위에서 검증한다")
+    void validateInquiryFilterReferences() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        InquiryListQuery query = new InquiryListQuery();
+        query.setServiceId(serviceId);
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerManagementService.getInquiries(storeId, query))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
+
+        verifyNoInteractions(queryRepository, aiInquiryClient);
     }
 }

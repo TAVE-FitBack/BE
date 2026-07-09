@@ -2,7 +2,9 @@ package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.customer.dto.request.ConsultationListQuery;
+import com.fitback.domain.customer.dto.request.InquiryListQuery;
 import com.fitback.domain.customer.dto.response.CustomerManagementConsultationListResponse;
+import com.fitback.domain.customer.dto.response.CustomerManagementInquiryListResponse;
 import com.fitback.domain.customer.dto.response.CustomerManagementSummaryResponse;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
@@ -13,12 +15,16 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationSearchCondition;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InflowPathCountRow;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryPageRows;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryRow;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquirySearchCondition;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.NonConversionReasonRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ServiceCountRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator.MonthRange;
 import com.fitback.domain.service.repository.ServiceRepository;
+import com.fitback.domain.inquiry.enums.InquiryStatus;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +36,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -38,6 +45,7 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class CustomerManagementService {
 
+    private static final int INQUIRY_MEMO_MAX_LENGTH = 100;
     private static final Set<String> LEAD_TEMPERATURES =
             Set.of("HOT", "WARM", "HOLD", "COLD", "LOST");
     private static final Map<String, String> REASON_DISPLAY_NAMES = Map.of(
@@ -122,6 +130,39 @@ public class CustomerManagementService {
                 .build();
     }
 
+    public CustomerManagementInquiryListResponse getInquiries(
+            UUID storeId,
+            InquiryListQuery query
+    ) {
+        validateStoreId(storeId);
+        CustomerManagementQueryValidator.validatePage(query.getPage(), query.getSize());
+        MonthRange range = CustomerManagementQueryValidator.resolveMonthRange(query.getMonth());
+        InquirySearchCondition condition = buildInquiryCondition(storeId, query);
+
+        InquiryPageRows pageRows = queryRepository.findInquiries(
+                storeId,
+                range,
+                condition,
+                query.getPage(),
+                query.getSize()
+        );
+        List<CustomerManagementInquiryListResponse.InquiryItem> content = pageRows.content().stream()
+                .map(this::toInquiryItem)
+                .toList();
+        int totalPages = pageRows.totalElements() == 0
+                ? 0
+                : (int) Math.ceil((double) pageRows.totalElements() / query.getSize());
+
+        return CustomerManagementInquiryListResponse.builder()
+                .content(content)
+                .page(query.getPage())
+                .size(query.getSize())
+                .totalElements(pageRows.totalElements())
+                .totalPages(totalPages)
+                .hasNext(query.getPage() + 1 < totalPages)
+                .build();
+    }
+
     private ConsultationSearchCondition buildConsultationCondition(
             UUID storeId,
             ConsultationListQuery query
@@ -153,7 +194,43 @@ public class CustomerManagementService {
         );
     }
 
+    private InquirySearchCondition buildInquiryCondition(UUID storeId, InquiryListQuery query) {
+        String keyword = CustomerManagementQueryValidator.normalizeKeyword(query.getKeyword());
+        String gender = validateEnumFilter(query.getGender(), Gender.class);
+        String inquiryStatus = validateEnumFilter(query.getInquiryStatus(), InquiryStatus.class);
+        if (InquiryStatus.CONVERTED.name().equals(inquiryStatus)) {
+            throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
+        }
+
+        validateInquiryFilterReferences(storeId, query);
+        return new InquirySearchCondition(
+                keyword,
+                gender,
+                query.getServiceId(),
+                query.getInflowPathId(),
+                inquiryStatus,
+                query.getCounselorId()
+        );
+    }
+
     private void validateFilterReferences(UUID storeId, ConsultationListQuery query) {
+        if (query.getServiceId() != null
+                && serviceRepository.findByIdAndStoreIdAndActiveTrue(query.getServiceId(), storeId).isEmpty()) {
+            throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
+        }
+        if (query.getInflowPathId() != null
+                && inflowPathOptionRepository
+                .findByIdAndStoreIdAndActiveTrue(query.getInflowPathId(), storeId)
+                .isEmpty()) {
+            throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
+        }
+        if (query.getCounselorId() != null
+                && userRepository.findByIdAndStore_Id(query.getCounselorId(), storeId).isEmpty()) {
+            throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
+        }
+    }
+
+    private void validateInquiryFilterReferences(UUID storeId, InquiryListQuery query) {
         if (query.getServiceId() != null
                 && serviceRepository.findByIdAndStoreIdAndActiveTrue(query.getServiceId(), storeId).isEmpty()) {
             throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
@@ -188,7 +265,7 @@ public class CustomerManagementService {
         if (value == null || value.isBlank()) {
             return null;
         }
-        return value.trim().toUpperCase();
+        return value.trim().toUpperCase(Locale.ROOT);
     }
 
     private Map<UUID, List<CustomerManagementConsultationListResponse.NonConversionReasonInfo>>
@@ -241,6 +318,41 @@ public class CustomerManagementService {
                 .reasonType(row.reasonType())
                 .displayName(REASON_DISPLAY_NAMES.getOrDefault(row.reasonType(), row.reasonType()))
                 .build();
+    }
+
+    private CustomerManagementInquiryListResponse.InquiryItem toInquiryItem(InquiryRow row) {
+        InquiryStatus status = InquiryStatus.valueOf(row.inquiryStatus());
+        boolean converted = row.convertedCustomerId() != null || row.convertedConsultationId() != null;
+        return CustomerManagementInquiryListResponse.InquiryItem.builder()
+                .inquiryId(row.inquiryId())
+                .name(row.name())
+                .phoneNum(row.phoneNum())
+                .gender(Gender.valueOf(row.gender()))
+                .birthDate(row.birthDate())
+                .serviceId(row.serviceId())
+                .serviceName(row.serviceName())
+                .inflowPathId(row.inflowPathId())
+                .inflowPathName(row.inflowPathName())
+                .memo(toInquiryMemo(row.rawText()))
+                .inquiryStatus(status)
+                .inquiryStatusName(status.getLabel())
+                .inquiredAt(row.inquiredAt())
+                .visitScheduledAt(row.visitScheduledAt())
+                .counselorId(row.counselorId())
+                .counselorName(row.counselorName())
+                .converted(converted)
+                .convertedCustomerId(row.convertedCustomerId())
+                .convertedConsultationId(row.convertedConsultationId())
+                .build();
+    }
+
+    private String toInquiryMemo(String rawText) {
+        int codePointCount = rawText.codePointCount(0, rawText.length());
+        if (codePointCount <= INQUIRY_MEMO_MAX_LENGTH) {
+            return rawText;
+        }
+        int endIndex = rawText.offsetByCodePoints(0, INQUIRY_MEMO_MAX_LENGTH);
+        return rawText.substring(0, endIndex) + "…";
     }
 
     private void validateStoreId(UUID storeId) {

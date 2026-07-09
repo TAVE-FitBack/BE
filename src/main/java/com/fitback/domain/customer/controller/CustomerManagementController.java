@@ -1,7 +1,9 @@
 package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.ConsultationListQuery;
+import com.fitback.domain.customer.dto.request.InquiryListQuery;
 import com.fitback.domain.customer.dto.response.CustomerManagementConsultationListResponse;
+import com.fitback.domain.customer.dto.response.CustomerManagementInquiryListResponse;
 import com.fitback.domain.customer.dto.response.CustomerManagementSummaryResponse;
 import com.fitback.domain.customer.service.CustomerManagementService;
 import com.fitback.global.response.ApiResponse;
@@ -44,6 +46,17 @@ public class CustomerManagementController {
     ) {
         CustomerManagementConsultationListResponse response =
                 customerManagementService.getConsultations(storeId, query);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @GetMapping("/inquiries")
+    @Operation(summary = "문의 목록 조회", description = "선택한 월의 미전환 문의를 문의 기록 단위로 조회합니다.")
+    public ResponseEntity<ApiResponse<CustomerManagementInquiryListResponse>> getInquiries(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @ParameterObject InquiryListQuery query
+    ) {
+        CustomerManagementInquiryListResponse response =
+                customerManagementService.getInquiries(storeId, query);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }

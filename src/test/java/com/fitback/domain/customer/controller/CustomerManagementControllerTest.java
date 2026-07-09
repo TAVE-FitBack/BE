@@ -1,7 +1,9 @@
 package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.ConsultationListQuery;
+import com.fitback.domain.customer.dto.request.InquiryListQuery;
 import com.fitback.domain.customer.dto.response.CustomerManagementConsultationListResponse;
+import com.fitback.domain.customer.dto.response.CustomerManagementInquiryListResponse;
 import com.fitback.domain.customer.dto.response.CustomerManagementSummaryResponse;
 import com.fitback.domain.customer.service.CustomerManagementService;
 import com.fitback.global.response.ApiResponse;
@@ -72,5 +74,32 @@ class CustomerManagementControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().data()).isEqualTo(serviceResponse);
         verify(service).getConsultations(storeId, query);
+    }
+
+    @Test
+    @DisplayName("문의 목록 조회 API는 서비스 결과를 ApiResponse로 반환한다")
+    void getInquiries() {
+        CustomerManagementService service = mock(CustomerManagementService.class);
+        CustomerManagementController controller = new CustomerManagementController(service);
+        UUID storeId = UUID.randomUUID();
+        InquiryListQuery query = new InquiryListQuery();
+        CustomerManagementInquiryListResponse serviceResponse =
+                CustomerManagementInquiryListResponse.builder()
+                        .content(List.of())
+                        .page(0)
+                        .size(10)
+                        .totalElements(0)
+                        .totalPages(0)
+                        .hasNext(false)
+                        .build();
+        when(service.getInquiries(storeId, query)).thenReturn(serviceResponse);
+
+        ResponseEntity<ApiResponse<CustomerManagementInquiryListResponse>> response =
+                controller.getInquiries(storeId, query);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().data()).isEqualTo(serviceResponse);
+        verify(service).getInquiries(storeId, query);
     }
 }

@@ -10,6 +10,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Repository
@@ -258,6 +259,82 @@ public class CustomerManagementQueryRepository {
         );
     }
 
+    public InquiryPageRows findInquiries(
+            UUID storeId,
+            MonthRange range,
+            InquirySearchCondition condition,
+            int page,
+            int size
+    ) {
+        String fromAndWhere = """
+                FROM inquiry i
+                JOIN service s ON s.id = i.service_id
+                JOIN inflow_path_option ip ON ip.id = i.inflow_path_id
+                JOIN users u ON u.id = i.user_id
+                WHERE i.store_id = :storeId
+                  AND i.inquired_at >= :startAt
+                  AND i.inquired_at < :endAt
+                  AND i.inquiry_status <> 'CONVERTED'
+                """;
+        StringBuilder filters = new StringBuilder();
+        MapSqlParameterSource params = parameters(storeId, range);
+        appendInquiryFilters(filters, params, condition);
+
+        String countSql = "SELECT COUNT(*) " + fromAndWhere + filters;
+        Long totalElements = jdbcTemplate.queryForObject(countSql, params, Long.class);
+
+        params.addValue("limit", size)
+                .addValue("offset", (long) page * size);
+        String contentSql = """
+                SELECT i.id AS inquiry_id,
+                       i.name,
+                       i.phone_num,
+                       i.gender,
+                       i.birth_date,
+                       s.id AS service_id,
+                       s.name AS service_name,
+                       ip.id AS inflow_path_id,
+                       ip.name AS inflow_path_name,
+                       i.raw_text,
+                       i.inquiry_status,
+                       i.inquired_at,
+                       i.visit_scheduled_at,
+                       u.id AS counselor_id,
+                       u.nickname AS counselor_name,
+                       i.converted_customer_id,
+                       i.converted_consultation_id
+                """ + fromAndWhere + filters + """
+                ORDER BY i.inquired_at DESC, i.id ASC
+                LIMIT :limit OFFSET :offset
+                """;
+
+        List<InquiryRow> content = jdbcTemplate.query(
+                contentSql,
+                params,
+                (rs, rowNum) -> new InquiryRow(
+                        rs.getObject("inquiry_id", UUID.class),
+                        rs.getString("name"),
+                        rs.getString("phone_num"),
+                        rs.getString("gender"),
+                        rs.getObject("birth_date", LocalDate.class),
+                        rs.getObject("service_id", UUID.class),
+                        rs.getString("service_name"),
+                        rs.getObject("inflow_path_id", UUID.class),
+                        rs.getString("inflow_path_name"),
+                        rs.getString("raw_text"),
+                        rs.getString("inquiry_status"),
+                        rs.getObject("inquired_at", OffsetDateTime.class),
+                        rs.getObject("visit_scheduled_at", OffsetDateTime.class),
+                        rs.getObject("counselor_id", UUID.class),
+                        rs.getString("counselor_name"),
+                        rs.getObject("converted_customer_id", UUID.class),
+                        rs.getObject("converted_consultation_id", UUID.class)
+                )
+        );
+
+        return new InquiryPageRows(content, totalElements == null ? 0 : totalElements);
+    }
+
     private void appendConsultationFilters(
             StringBuilder sql,
             MapSqlParameterSource params,
@@ -278,7 +355,7 @@ public class CustomerManagementQueryRepository {
                           )
                       )
                     """);
-            params.addValue("keyword", "%" + condition.keyword().toLowerCase() + "%");
+            params.addValue("keyword", "%" + condition.keyword().toLowerCase(Locale.ROOT) + "%");
         }
         appendEquals(sql, params, "c.gender", "gender", condition.gender());
         appendEquals(sql, params, "c.inflow_path_id", "inflowPathId", condition.inflowPathId());
@@ -312,6 +389,28 @@ public class CustomerManagementQueryRepository {
                     """);
             params.addValue("reasonType", condition.reasonType());
         }
+    }
+
+    private void appendInquiryFilters(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            InquirySearchCondition condition
+    ) {
+        if (condition.keyword() != null) {
+            sql.append("""
+                      AND (
+                          LOWER(i.name) LIKE :keyword
+                          OR LOWER(i.phone_num) LIKE :keyword
+                          OR LOWER(s.name) LIKE :keyword
+                      )
+                    """);
+            params.addValue("keyword", "%" + condition.keyword().toLowerCase(Locale.ROOT) + "%");
+        }
+        appendEquals(sql, params, "i.gender", "gender", condition.gender());
+        appendEquals(sql, params, "i.service_id", "serviceId", condition.serviceId());
+        appendEquals(sql, params, "i.inflow_path_id", "inflowPathId", condition.inflowPathId());
+        appendEquals(sql, params, "i.inquiry_status", "inquiryStatus", condition.inquiryStatus());
+        appendEquals(sql, params, "i.user_id", "counselorId", condition.counselorId());
     }
 
     private void appendEquals(
@@ -403,6 +502,43 @@ public class CustomerManagementQueryRepository {
     public record NonConversionReasonRow(
             UUID customerId,
             String reasonType
+    ) {
+    }
+
+    public record InquirySearchCondition(
+            String keyword,
+            String gender,
+            UUID serviceId,
+            UUID inflowPathId,
+            String inquiryStatus,
+            UUID counselorId
+    ) {
+    }
+
+    public record InquiryPageRows(
+            List<InquiryRow> content,
+            long totalElements
+    ) {
+    }
+
+    public record InquiryRow(
+            UUID inquiryId,
+            String name,
+            String phoneNum,
+            String gender,
+            LocalDate birthDate,
+            UUID serviceId,
+            String serviceName,
+            UUID inflowPathId,
+            String inflowPathName,
+            String rawText,
+            String inquiryStatus,
+            OffsetDateTime inquiredAt,
+            OffsetDateTime visitScheduledAt,
+            UUID counselorId,
+            String counselorName,
+            UUID convertedCustomerId,
+            UUID convertedConsultationId
     ) {
     }
 }
