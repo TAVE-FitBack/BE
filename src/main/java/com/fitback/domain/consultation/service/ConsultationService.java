@@ -141,7 +141,12 @@ public class ConsultationService {
         validateDuplicatePhone(storeId, request);
 
         Customer customer = saveCustomerForConsultation(counselor, service, inflowPathOption, request);
-        applyRegistrationStatus(customer, service, request.getConsultation().getRegistrationStatus());
+        applyRegistrationStatus(
+                customer,
+                service,
+                request.getConsultation().getRegistrationStatus(),
+                request.getConsultation().getConsultedAt()
+        );
         Consultation consultation = saveConsultation(customer, counselor, service, request);
         saveConsultationCreatedTimeline(customer, counselor, service, consultation);
         eventPublisher.publishEvent(new ConsultationCreatedEvent(consultation.getId()));
@@ -209,6 +214,9 @@ public class ConsultationService {
                 .inflowPathOption(inflowPathOption)
                 .status(resolveInitialStatus(request.getConsultation().getRegistrationStatus()))
                 .registeredService(request.getConsultation().getRegistrationStatus() == ConsultationRegistrationStatus.REGISTERED ? service : null)
+                .registeredAt(request.getConsultation().getRegistrationStatus() == ConsultationRegistrationStatus.REGISTERED
+                        ? request.getConsultation().getConsultedAt()
+                        : null)
                 .firstConsultAt(consultedDate)
                 .latestConsultAt(consultedDate)
                 .build();
@@ -216,9 +224,14 @@ public class ConsultationService {
         return customerRepository.save(customer);
     }
 
-    private void applyRegistrationStatus(Customer customer, Service service, ConsultationRegistrationStatus registrationStatus) {
+    private void applyRegistrationStatus(
+            Customer customer,
+            Service service,
+            ConsultationRegistrationStatus registrationStatus,
+            OffsetDateTime registeredAt
+    ) {
         if (registrationStatus == ConsultationRegistrationStatus.REGISTERED) {
-            customer.markRegistered(service);
+            customer.markRegistered(service, registeredAt);
             return;
         }
 

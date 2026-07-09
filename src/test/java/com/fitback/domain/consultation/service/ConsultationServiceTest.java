@@ -424,6 +424,7 @@ class ConsultationServiceTest {
                 .preferredContactChannel(PreferredContactChannel.KAKAO)
                 .inflowPathOption(inflowPathOption)
                 .status(CustomerStatus.REGISTERED)
+                .registeredAt(consultedAt)
                 .firstConsultAt(consultedAt.toLocalDate())
                 .latestConsultAt(consultedAt.toLocalDate())
                 .build();
@@ -480,6 +481,7 @@ class ConsultationServiceTest {
         assertThat(customerToSave.getInflowPathOption()).isEqualTo(inflowPathOption);
         assertThat(customerToSave.getStatus()).isEqualTo(CustomerStatus.REGISTERED);
         assertThat(customerToSave.getRegisteredService()).isEqualTo(service);
+        assertThat(customerToSave.getRegisteredAt()).isEqualTo(consultedAt);
 
         Consultation consultationToSave = consultationCaptor.getValue();
         assertThat(consultationToSave.getCustomer()).isEqualTo(savedCustomer);
@@ -671,6 +673,7 @@ class ConsultationServiceTest {
                 .preferredContactChannel(PreferredContactChannel.KAKAO)
                 .inflowPathOption(inflowPathOption)
                 .status(CustomerStatus.REGISTERED)
+                .registeredAt(consultedAt)
                 .firstConsultAt(consultedAt.toLocalDate())
                 .latestConsultAt(consultedAt.toLocalDate())
                 .build();
