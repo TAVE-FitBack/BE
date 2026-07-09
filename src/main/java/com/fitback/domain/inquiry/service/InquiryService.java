@@ -1,7 +1,17 @@
 package com.fitback.domain.inquiry.service;
 
 import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.customer.repository.InterestServiceRepository;
+import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationSourceType;
+import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
@@ -26,6 +36,7 @@ import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @org.springframework.stereotype.Service
@@ -40,6 +51,9 @@ public class InquiryService {
     private final UserRepository userRepository;
     private final InquiryRepository inquiryRepository;
     private final AiInquiryClient aiInquiryClient;
+    private final CustomerRepository customerRepository;
+    private final InterestServiceRepository interestServiceRepository;
+    private final ConsultationRepository consultationRepository;
 
     public InquiryNewResponse getNewInquiryData(UUID storeId) {
         if (storeId == null) {
@@ -157,6 +171,50 @@ public class InquiryService {
                 .orElseThrow(() -> new BusinessException(InquiryErrorCode.COUNSELOR_NOT_FOUND));
 
         return inquiry;
+    }
+
+    InquiryConversionContext resolveNewCustomerConversion(Inquiry inquiry) {
+        Optional<Customer> existingCustomer = customerRepository.findByPhoneNumAndStoreId(
+                inquiry.getPhoneNum(),
+                inquiry.getStore().getId()
+        );
+        if (existingCustomer.isPresent()) {
+            return InquiryConversionContext.existingCustomer(existingCustomer.get());
+        }
+
+        Customer customer = customerRepository.save(Customer.builder()
+                .store(inquiry.getStore())
+                .registeredService(null)
+                .name(inquiry.getName())
+                .gender(inquiry.getGender())
+                .birthDate(inquiry.getBirthDate())
+                .phoneNum(inquiry.getPhoneNum())
+                .preferredContactChannel(inquiry.getPreferredContactChannel())
+                .inflowPathOption(inquiry.getInflowPathOption())
+                .status(CustomerStatus.PENDING)
+                .registeredAt(null)
+                .firstConsultAt(inquiry.getInquiredAt().toLocalDate())
+                .latestConsultAt(inquiry.getInquiredAt().toLocalDate())
+                .build());
+
+        interestServiceRepository.save(InterestService.builder()
+                .customer(customer)
+                .service(inquiry.getService())
+                .build());
+
+        Consultation consultation = consultationRepository.save(Consultation.builder()
+                .customer(customer)
+                .user(inquiry.getUser())
+                .consultedService(inquiry.getService())
+                .consultedAt(inquiry.getInquiredAt())
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.INQUIRY)
+                .rawText(inquiry.getRawText())
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build());
+
+        return InquiryConversionContext.newCustomer(customer, consultation);
     }
 
     @Transactional

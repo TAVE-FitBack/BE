@@ -1,9 +1,19 @@
 package com.fitback.domain.inquiry.service;
 
 import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
+import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.customer.repository.InterestServiceRepository;
+import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationSourceType;
+import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
@@ -68,6 +78,15 @@ class InquiryServiceTest {
     @Mock
     private AiInquiryClient aiInquiryClient;
 
+    @Mock
+    private CustomerRepository customerRepository;
+
+    @Mock
+    private InterestServiceRepository interestServiceRepository;
+
+    @Mock
+    private ConsultationRepository consultationRepository;
+
     private InquiryService inquiryService;
 
     @BeforeEach
@@ -77,7 +96,10 @@ class InquiryServiceTest {
                 inflowPathOptionRepository,
                 userRepository,
                 inquiryRepository,
-                aiInquiryClient
+                aiInquiryClient,
+                customerRepository,
+                interestServiceRepository,
+                consultationRepository
         );
     }
 
@@ -483,6 +505,116 @@ class InquiryServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(InquiryErrorCode.COUNSELOR_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("동일 매장과 연락처의 고객이 없으면 문의 정보로 PENDING 고객과 관심 서비스, 첫 상담을 생성한다")
+    void resolveNewCustomerConversionCreatesCustomerAndFirstConsultation() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime inquiredAt = OffsetDateTime.parse("2026-07-01T14:30:00+09:00");
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder().id(UUID.randomUUID()).store(store).build();
+        InflowPathOption inflowPath = InflowPathOption.builder()
+                .id(UUID.randomUUID())
+                .store(store)
+                .build();
+        User counselor = User.builder().id(UUID.randomUUID()).store(store).build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .service(service)
+                .user(counselor)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPath)
+                .inquiryStatus(InquiryStatus.VISIT_SCHEDULED)
+                .inquiredAt(inquiredAt)
+                .rawText("방문 상담 문의 원문")
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreId(inquiry.getPhoneNum(), storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenAnswer(invocation -> {
+                    Customer customer = invocation.getArgument(0);
+                    ReflectionTestUtils.setField(customer, "id", customerId);
+                    return customer;
+                });
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenAnswer(invocation -> {
+                    Consultation consultation = invocation.getArgument(0);
+                    ReflectionTestUtils.setField(consultation, "id", consultationId);
+                    return consultation;
+                });
+
+        InquiryConversionContext result = inquiryService.resolveNewCustomerConversion(inquiry);
+
+        assertThat(result.customerCreated()).isTrue();
+        assertThat(result.customer().getId()).isEqualTo(customerId);
+        assertThat(result.consultation().getId()).isEqualTo(consultationId);
+
+        ArgumentCaptor<Customer> customerCaptor = ArgumentCaptor.forClass(Customer.class);
+        verify(customerRepository).save(customerCaptor.capture());
+        Customer customer = customerCaptor.getValue();
+        assertThat(customer.getStore()).isSameAs(store);
+        assertThat(customer.getRegisteredService()).isNull();
+        assertThat(customer.getName()).isEqualTo(inquiry.getName());
+        assertThat(customer.getGender()).isEqualTo(inquiry.getGender());
+        assertThat(customer.getBirthDate()).isEqualTo(inquiry.getBirthDate());
+        assertThat(customer.getPhoneNum()).isEqualTo(inquiry.getPhoneNum());
+        assertThat(customer.getPreferredContactChannel()).isEqualTo(inquiry.getPreferredContactChannel());
+        assertThat(customer.getInflowPathOption()).isSameAs(inflowPath);
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.PENDING);
+        assertThat(customer.getRegisteredAt()).isNull();
+        assertThat(customer.getFirstConsultAt()).isEqualTo(inquiredAt.toLocalDate());
+        assertThat(customer.getLatestConsultAt()).isEqualTo(inquiredAt.toLocalDate());
+
+        ArgumentCaptor<InterestService> interestServiceCaptor = ArgumentCaptor.forClass(InterestService.class);
+        verify(interestServiceRepository).save(interestServiceCaptor.capture());
+        assertThat(interestServiceCaptor.getValue().getCustomer()).isSameAs(customer);
+        assertThat(interestServiceCaptor.getValue().getService()).isSameAs(service);
+
+        ArgumentCaptor<Consultation> consultationCaptor = ArgumentCaptor.forClass(Consultation.class);
+        verify(consultationRepository).save(consultationCaptor.capture());
+        Consultation consultation = consultationCaptor.getValue();
+        assertThat(consultation.getCustomer()).isSameAs(customer);
+        assertThat(consultation.getUser()).isSameAs(counselor);
+        assertThat(consultation.getConsultedService()).isSameAs(service);
+        assertThat(consultation.getConsultedAt()).isEqualTo(inquiredAt);
+        assertThat(consultation.getSessionNo()).isEqualTo(1);
+        assertThat(consultation.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
+        assertThat(consultation.getSourceType()).isEqualTo(ConsultationSourceType.INQUIRY);
+        assertThat(consultation.getRawText()).isEqualTo(inquiry.getRawText());
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("동일 매장과 연락처의 기존 고객이 있으면 신규 고객, 관심 서비스, 첫 상담을 생성하지 않는다")
+    void resolveNewCustomerConversionReturnsExistingCustomer() {
+        UUID storeId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Customer existingCustomer = Customer.builder().id(UUID.randomUUID()).store(store).build();
+        Inquiry inquiry = Inquiry.builder()
+                .store(store)
+                .phoneNum("010-1234-5678")
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreId(inquiry.getPhoneNum(), storeId))
+                .thenReturn(Optional.of(existingCustomer));
+
+        InquiryConversionContext result = inquiryService.resolveNewCustomerConversion(inquiry);
+
+        assertThat(result.customerCreated()).isFalse();
+        assertThat(result.customer()).isSameAs(existingCustomer);
+        assertThat(result.consultation()).isNull();
+        verify(customerRepository, never()).save(any(Customer.class));
+        verifyNoInteractions(interestServiceRepository, consultationRepository);
     }
 
     @Test
