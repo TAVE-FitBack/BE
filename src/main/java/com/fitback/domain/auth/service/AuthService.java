@@ -1,5 +1,6 @@
 package com.fitback.domain.auth.service;
 
+import com.fitback.domain.auth.dto.request.EmailVerificationRequest;
 import com.fitback.domain.auth.dto.request.LoginRequest;
 import com.fitback.domain.auth.dto.request.SignupRequest;
 import com.fitback.domain.auth.dto.request.TokenRefreshRequest;
@@ -37,15 +38,63 @@ public class AuthService {
 
     private static final String REFRESH_TOKEN_PREFIX = "RT:";
     private static final String EMAIL_VERIFY_PREFIX = "EV:";
+    private static final String EMAIL_VERIFIED_PREFIX = "EV:verified:";
     private static final String BLACKLIST_PREFIX = "BL:";
     private static final long EMAIL_VERIFY_EXPIRATION = 60 * 60 * 24L; // 24시간 (초)
 
-    /* 회원가입 */
+    /* 이메일 인증 메일 발송 */
+    @Transactional
+    public void sendVerification(EmailVerificationRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new BusinessException(AuthErrorCode.EMAIL_ALREADY_EXISTS);
+        }
+
+        String token = UUID.randomUUID().toString();
+
+        // Redis에 EV:{token} = email 저장 (TTL 24시간)
+        redisTemplate.opsForValue().set(
+                EMAIL_VERIFY_PREFIX + token,
+                request.getEmail(),
+                EMAIL_VERIFY_EXPIRATION,
+                TimeUnit.SECONDS
+        );
+
+        emailService.sendVerification(request.getEmail(), token);
+        log.info("인증 메일 발송 — email: {}", request.getEmail());
+    }
+
+    /* 이메일 인증 링크 확인 — User 생성 아직 X Redis에만 인증 완료 표시 */
+    @Transactional
+    public void verifyEmail(String token) {
+        String email = redisTemplate.opsForValue().get(EMAIL_VERIFY_PREFIX + token);
+
+        if (email == null) {
+            throw new BusinessException(AuthErrorCode.INVALID_VERIFICATION_TOKEN);
+        }
+
+        redisTemplate.opsForValue().set(
+                EMAIL_VERIFIED_PREFIX + token,
+                email,
+                EMAIL_VERIFY_EXPIRATION,
+                TimeUnit.SECONDS
+        );
+
+        // 미인증 토큰 삭제
+        redisTemplate.delete(EMAIL_VERIFY_PREFIX + token);
+
+        log.info("이메일 인증 완료 — email: {}", email);
+    }
+
+    /* 회원가입 — 인증 완료된 토큰 + 닉네임/비밀번호로 User 생성 */
     @Transactional
     public SignupResponse signup(SignupRequest request) {
 
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new BusinessException(AuthErrorCode.EMAIL_ALREADY_EXISTS);
+        // 인증 완료된 토큰에서 이메일 조회
+        String email = redisTemplate.opsForValue()
+                .get(EMAIL_VERIFIED_PREFIX + request.getToken());
+
+        if (email == null) {
+            throw new BusinessException(AuthErrorCode.INVALID_VERIFICATION_TOKEN);
         }
 
         if (userRepository.existsByNickname(request.getNickname())) {
@@ -61,26 +110,18 @@ public class AuthService {
         }
 
         User user = User.builder()
-                .email(request.getEmail())
+                .email(email)
                 .nickname(request.getNickname())
                 .role(UserRole.OWNER)
                 .password(passwordEncoder.encode(request.getPassword()))
                 .agreeTerms(request.isAgreeTerms())
                 .agreeMarketing(request.isAgreeMarketing())
-                .emailVerified(false)
+                .emailVerified(true)  // 이미 인증 완료된 상태로 생성
                 .build();
         userRepository.save(user);
 
-        // 이메일 인증 토큰 Redis 저장 (TTL 24시간)
-        String verificationToken = UUID.randomUUID().toString();
-        redisTemplate.opsForValue().set(
-                EMAIL_VERIFY_PREFIX + verificationToken,
-                user.getEmail(),
-                EMAIL_VERIFY_EXPIRATION,
-                TimeUnit.SECONDS
-        );
-
-        emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+        // 인증 완료 토큰 삭제
+        redisTemplate.delete(EMAIL_VERIFIED_PREFIX + request.getToken());
 
         log.info("회원가입 완료 — email: {}, userId: {}", user.getEmail(), user.getId());
 
@@ -89,23 +130,6 @@ public class AuthService {
                 .email(user.getEmail())
                 .nickname(user.getNickname())
                 .build();
-    }
-
-    /* 이메일 인증 */
-    @Transactional
-    public void verifyEmail(String token) {
-
-        String email = redisTemplate.opsForValue().get(EMAIL_VERIFY_PREFIX + token);
-
-        if (email == null) {
-            throw new BusinessException(AuthErrorCode.INVALID_VERIFICATION_TOKEN);
-        }
-
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
-
-        user.verifyEmail();
-        redisTemplate.delete(EMAIL_VERIFY_PREFIX + token); // 인증 완료 후 삭제
     }
 
     /* 로그인 */
