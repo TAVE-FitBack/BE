@@ -3,7 +3,7 @@ package com.fitback.domain.inquiry.service;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.customer.entity.Customer;
 
-record InquiryConversionContext(
+public record InquiryConversionContext(
         Customer customer,
         Consultation consultation,
         boolean customerCreated

@@ -2,11 +2,15 @@ package com.fitback.domain.inquiry.service;
 
 import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.consultation.entity.Consultation;
@@ -54,6 +58,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -87,6 +93,9 @@ class InquiryServiceTest {
     @Mock
     private ConsultationRepository consultationRepository;
 
+    @Mock
+    private CustomerActivityTimelineRepository customerActivityTimelineRepository;
+
     private InquiryService inquiryService;
 
     @BeforeEach
@@ -99,7 +108,8 @@ class InquiryServiceTest {
                 aiInquiryClient,
                 customerRepository,
                 interestServiceRepository,
-                consultationRepository
+                consultationRepository,
+                customerActivityTimelineRepository
         );
     }
 
@@ -698,6 +708,97 @@ class InquiryServiceTest {
         verify(interestServiceRepository).save(captor.capture());
         assertThat(captor.getValue().getCustomer()).isSameAs(existingCustomer);
         assertThat(captor.getValue().getService()).isSameAs(service);
+    }
+
+    @Test
+    @DisplayName("신규 고객 전환 완료 시 문의 상태와 전환 정보를 저장하고 타임라인에 신규 생성 여부를 기록한다")
+    void convertInquiryUpdatesInquiryAndSavesNewCustomerTimeline() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        User counselor = User.builder().id(UUID.randomUUID()).store(store).build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .user(counselor)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        Customer customer = Customer.builder().id(customerId).store(store).build();
+        Consultation consultation = Consultation.builder()
+                .id(consultationId)
+                .customer(customer)
+                .sessionNo(1)
+                .build();
+        InquiryConversionContext context = InquiryConversionContext.newCustomer(customer, consultation);
+        InquiryService service = spy(inquiryService);
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doReturn(context).when(service).resolveCustomerConversion(inquiry);
+
+        InquiryConversionContext result = service.convertInquiry(storeId, inquiryId);
+
+        assertThat(result).isSameAs(context);
+        assertThat(inquiry.getInquiryStatus()).isEqualTo(InquiryStatus.CONVERTED);
+        assertThat(inquiry.getConvertedCustomer()).isSameAs(customer);
+        assertThat(inquiry.getConvertedConsultation()).isSameAs(consultation);
+        assertThat(inquiry.getConvertedAt()).isNotNull();
+
+        ArgumentCaptor<CustomerActivityTimeline> captor =
+                ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(captor.capture());
+        CustomerActivityTimeline timeline = captor.getValue();
+        assertThat(timeline.getStore()).isSameAs(store);
+        assertThat(timeline.getCustomer()).isSameAs(customer);
+        assertThat(timeline.getActorUser()).isSameAs(counselor);
+        assertThat(timeline.getActivityType())
+                .isEqualTo(CustomerActivityType.INQUIRY_CONVERTED_TO_CONSULTATION);
+        assertThat(timeline.getTitle()).isEqualTo("문의가 상담으로 전환되었습니다.");
+        assertThat(timeline.getDescription()).contains("신규 고객과 첫 상담");
+        assertThat(timeline.getRelatedType()).isEqualTo(ActivityRelatedType.INQUIRY);
+        assertThat(timeline.getRelatedId()).isEqualTo(inquiryId);
+        assertThat(timeline.getOccurredAt()).isEqualTo(inquiry.getConvertedAt());
+        assertThat(timeline.getAfterValue())
+                .containsEntry("newCustomerCreated", true)
+                .containsEntry("customerId", customerId)
+                .containsEntry("consultationId", consultationId)
+                .containsEntry("sessionNo", 1);
+    }
+
+    @Test
+    @DisplayName("기존 고객 전환 타임라인에는 신규 고객을 생성하지 않았음을 기록한다")
+    void convertInquirySavesExistingCustomerTimeline() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .user(User.builder().id(UUID.randomUUID()).store(store).build())
+                .inquiryStatus(InquiryStatus.VISIT_SCHEDULED)
+                .build();
+        Customer customer = Customer.builder().id(UUID.randomUUID()).store(store).build();
+        Consultation consultation = Consultation.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .sessionNo(3)
+                .build();
+        InquiryConversionContext context = InquiryConversionContext.existingCustomer(customer, consultation);
+        InquiryService service = spy(inquiryService);
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doReturn(context).when(service).resolveCustomerConversion(inquiry);
+
+        service.convertInquiry(storeId, inquiryId);
+
+        ArgumentCaptor<CustomerActivityTimeline> captor =
+                ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(captor.capture());
+        assertThat(captor.getValue().getDescription()).contains("기존 고객");
+        assertThat(captor.getValue().getAfterValue())
+                .containsEntry("newCustomerCreated", false)
+                .containsEntry("sessionNo", 3);
     }
 
     @Test

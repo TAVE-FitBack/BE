@@ -2,8 +2,12 @@ package com.fitback.domain.inquiry.service;
 
 import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
@@ -34,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,6 +59,7 @@ public class InquiryService {
     private final CustomerRepository customerRepository;
     private final InterestServiceRepository interestServiceRepository;
     private final ConsultationRepository consultationRepository;
+    private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
     public InquiryNewResponse getNewInquiryData(UUID storeId) {
         if (storeId == null) {
@@ -173,6 +179,18 @@ public class InquiryService {
         return inquiry;
     }
 
+    @Transactional
+    public InquiryConversionContext convertInquiry(UUID storeId, UUID inquiryId) {
+        Inquiry inquiry = loadInquiryForConversion(storeId, inquiryId);
+        InquiryConversionContext context = resolveCustomerConversion(inquiry);
+        OffsetDateTime convertedAt = OffsetDateTime.now();
+
+        inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
+        saveInquiryConvertedTimeline(inquiry, context, convertedAt);
+
+        return context;
+    }
+
     InquiryConversionContext resolveCustomerConversion(Inquiry inquiry) {
         Optional<Customer> existingCustomer = customerRepository.findByPhoneNumAndStoreIdForUpdate(
                 inquiry.getPhoneNum(),
@@ -251,6 +269,35 @@ public class InquiryService {
         }
 
         return InquiryConversionContext.existingCustomer(customer, consultation);
+    }
+
+    private void saveInquiryConvertedTimeline(
+            Inquiry inquiry,
+            InquiryConversionContext context,
+            OffsetDateTime convertedAt
+    ) {
+        Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("newCustomerCreated", context.customerCreated());
+        afterValue.put("customerId", context.customer().getId());
+        afterValue.put("consultationId", context.consultation().getId());
+        afterValue.put("sessionNo", context.consultation().getSessionNo());
+
+        String description = context.customerCreated()
+                ? "문의 기록을 기반으로 신규 고객과 첫 상담 기록이 생성되었습니다."
+                : "문의 기록을 기반으로 기존 고객에 새로운 상담 기록이 추가되었습니다.";
+
+        customerActivityTimelineRepository.save(CustomerActivityTimeline.builder()
+                .store(inquiry.getStore())
+                .customer(context.customer())
+                .actorUser(inquiry.getUser())
+                .activityType(CustomerActivityType.INQUIRY_CONVERTED_TO_CONSULTATION)
+                .title("문의가 상담으로 전환되었습니다.")
+                .description(description)
+                .relatedType(ActivityRelatedType.INQUIRY)
+                .relatedId(inquiry.getId())
+                .afterValue(afterValue)
+                .occurredAt(convertedAt)
+                .build());
     }
 
     @Transactional
