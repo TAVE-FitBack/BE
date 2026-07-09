@@ -13,7 +13,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -47,6 +49,16 @@ public class InquiryController {
     ) {
         Map<String, Object> response = inquiryService.checkPreview(storeId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @DeleteMapping("/{inquiryId}")
+    @Operation(summary = "문의 삭제", description = "로그인 사용자의 매장에 속하고 상담으로 전환되지 않은 문의를 삭제합니다.")
+    public ResponseEntity<Void> deleteInquiry(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @PathVariable UUID inquiryId
+    ) {
+        inquiryService.deleteInquiry(storeId, inquiryId);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping

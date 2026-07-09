@@ -116,6 +116,22 @@ public class InquiryService {
     }
 
     @Transactional
+    public void deleteInquiry(UUID storeId, UUID inquiryId) {
+        if (storeId == null) {
+            throw new BusinessException(InquiryErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Inquiry inquiry = inquiryRepository.findByIdAndStore_Id(inquiryId, storeId)
+                .orElseThrow(() -> new BusinessException(InquiryErrorCode.INQUIRY_NOT_FOUND));
+
+        if (inquiry.getInquiryStatus() == InquiryStatus.CONVERTED) {
+            throw new BusinessException(InquiryErrorCode.INQUIRY_ALREADY_CONVERTED);
+        }
+
+        inquiryRepository.delete(inquiry);
+    }
+
+    @Transactional
     public InquiryCreateResponse createInquiry(UUID storeId, InquiryCreateRequest request) {
         if (storeId == null) {
             throw new BusinessException(InquiryErrorCode.STORE_NOT_ASSIGNED);

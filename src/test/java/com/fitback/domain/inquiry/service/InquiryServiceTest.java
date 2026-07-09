@@ -27,6 +27,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -45,6 +47,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -246,6 +249,80 @@ class InquiryServiceTest {
 
         verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
         verifyNoInteractions(inflowPathOptionRepository, userRepository);
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = InquiryStatus.class,
+            names = {"RECEIVED", "VISIT_SCHEDULED", "VISIT_CANCELED"}
+    )
+    @DisplayName("상담으로 전환되지 않은 문의는 물리 삭제한다")
+    void deleteInquiry(InquiryStatus inquiryStatus) {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(inquiryStatus)
+                .build();
+
+        when(inquiryRepository.findByIdAndStore_Id(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+
+        inquiryService.deleteInquiry(storeId, inquiryId);
+
+        verify(inquiryRepository).findByIdAndStore_Id(inquiryId, storeId);
+        verify(inquiryRepository).delete(inquiry);
+    }
+
+    @Test
+    @DisplayName("문의 삭제 시 매장이 없으면 STORE_NOT_ASSIGNED 예외가 발생한다")
+    void deleteInquiryStoreNotAssigned() {
+        assertThatThrownBy(() -> inquiryService.deleteInquiry(null, UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.STORE_NOT_ASSIGNED);
+
+        verifyNoInteractions(inquiryRepository);
+    }
+
+    @Test
+    @DisplayName("문의가 없거나 다른 매장 소속이면 INQUIRY_NOT_FOUND 예외가 발생한다")
+    void deleteInquiryNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+
+        when(inquiryRepository.findByIdAndStore_Id(inquiryId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.deleteInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_NOT_FOUND);
+
+        verify(inquiryRepository).findByIdAndStore_Id(inquiryId, storeId);
+        verify(inquiryRepository, never()).delete(any(Inquiry.class));
+    }
+
+    @Test
+    @DisplayName("이미 상담으로 전환된 문의는 삭제하지 않는다")
+    void deleteInquiryAlreadyConverted() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.CONVERTED)
+                .build();
+
+        when(inquiryRepository.findByIdAndStore_Id(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+
+        assertThatThrownBy(() -> inquiryService.deleteInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_ALREADY_CONVERTED);
+
+        verify(inquiryRepository).findByIdAndStore_Id(inquiryId, storeId);
+        verify(inquiryRepository, never()).delete(any(Inquiry.class));
     }
 
     @Test
