@@ -16,10 +16,22 @@ public class InquiryListQuery {
     @Schema(description = "이름, 연락처 또는 상품명 검색")
     private String keyword;
 
+    @Schema(description = "성별", allowableValues = {"MALE", "FEMALE"})
     private String gender;
+
+    @Schema(description = "문의 상품 ID")
     private UUID serviceId;
+
+    @Schema(description = "문의 경로 ID")
     private UUID inflowPathId;
+
+    @Schema(
+            description = "문의 상태. 전환 완료 문의는 목록에서 제외",
+            allowableValues = {"RECEIVED", "VISIT_SCHEDULED", "VISIT_CANCELED"}
+    )
     private String inquiryStatus;
+
+    @Schema(description = "담당자 ID")
     private UUID counselorId;
 
     @Schema(defaultValue = "0", minimum = "0")

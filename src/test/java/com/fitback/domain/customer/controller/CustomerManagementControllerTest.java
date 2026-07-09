@@ -11,7 +11,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
 
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,6 +26,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CustomerManagementControllerTest {
+
+    @Test
+    @DisplayName("전용 Controller는 세 조회 API와 인증 사용자의 storeId 주입 계약을 선언한다")
+    void declaresCustomerManagementControllerContract() {
+        RequestMapping requestMapping = CustomerManagementController.class.getAnnotation(RequestMapping.class);
+        assertThat(requestMapping.value()).containsExactly("/api/customer-management");
+
+        assertEndpointContract("getSummary", "/summary");
+        assertEndpointContract("getConsultations", "/consultations");
+        assertEndpointContract("getInquiries", "/inquiries");
+    }
 
     @Test
     @DisplayName("상단 통계 조회 API는 서비스 결과를 ApiResponse로 반환한다")
@@ -101,5 +117,24 @@ class CustomerManagementControllerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().data()).isEqualTo(serviceResponse);
         verify(service).getInquiries(storeId, query);
+    }
+
+    private void assertEndpointContract(String methodName, String path) {
+        Method method = Arrays.stream(CustomerManagementController.class.getDeclaredMethods())
+                .filter(candidate -> candidate.getName().equals(methodName))
+                .findFirst()
+                .orElseThrow();
+        assertThat(method.getAnnotation(GetMapping.class).value()).containsExactly(path);
+
+        java.lang.reflect.Parameter storeIdParameter = method.getParameters()[0];
+        AuthenticationPrincipal authenticationPrincipal =
+                storeIdParameter.getAnnotation(AuthenticationPrincipal.class);
+        assertThat(authenticationPrincipal).isNotNull();
+        assertThat(authenticationPrincipal.expression()).isEqualTo("user.storeId");
+
+        io.swagger.v3.oas.annotations.Parameter swaggerParameter =
+                storeIdParameter.getAnnotation(io.swagger.v3.oas.annotations.Parameter.class);
+        assertThat(swaggerParameter).isNotNull();
+        assertThat(swaggerParameter.hidden()).isTrue();
     }
 }
