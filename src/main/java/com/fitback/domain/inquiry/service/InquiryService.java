@@ -132,6 +132,34 @@ public class InquiryService {
     }
 
     @Transactional
+    public Inquiry loadInquiryForConversion(UUID storeId, UUID inquiryId) {
+        if (storeId == null) {
+            throw new BusinessException(InquiryErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Inquiry inquiry = inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId)
+                .orElseThrow(() -> new BusinessException(InquiryErrorCode.INQUIRY_NOT_FOUND));
+
+        if (inquiry.getInquiryStatus() == InquiryStatus.CONVERTED) {
+            throw new BusinessException(InquiryErrorCode.INQUIRY_ALREADY_CONVERTED);
+        }
+
+        serviceRepository.findByIdAndStoreIdAndActiveTrue(inquiry.getService().getId(), storeId)
+                .orElseThrow(() -> new BusinessException(InquiryErrorCode.SERVICE_NOT_FOUND));
+
+        inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(
+                        inquiry.getInflowPathOption().getId(),
+                        storeId
+                )
+                .orElseThrow(() -> new BusinessException(InquiryErrorCode.INFLOW_PATH_NOT_FOUND));
+
+        userRepository.findByIdAndStore_Id(inquiry.getUser().getId(), storeId)
+                .orElseThrow(() -> new BusinessException(InquiryErrorCode.COUNSELOR_NOT_FOUND));
+
+        return inquiry;
+    }
+
+    @Transactional
     public InquiryCreateResponse createInquiry(UUID storeId, InquiryCreateRequest request) {
         if (storeId == null) {
             throw new BusinessException(InquiryErrorCode.STORE_NOT_ASSIGNED);

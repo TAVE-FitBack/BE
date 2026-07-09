@@ -326,6 +326,166 @@ class InquiryServiceTest {
     }
 
     @Test
+    @DisplayName("상담 전환용 문의를 비관적 잠금으로 조회하고 서비스, 유입경로, 문의 담당자를 검증한다")
+    void loadInquiryForConversion() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .active(true)
+                .build();
+        InflowPathOption inflowPath = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(counselorId)
+                .store(store)
+                .build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .service(service)
+                .inflowPathOption(inflowPath)
+                .user(counselor)
+                .inquiryStatus(InquiryStatus.VISIT_SCHEDULED)
+                .build();
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPath));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId))
+                .thenReturn(Optional.of(counselor));
+
+        Inquiry result = inquiryService.loadInquiryForConversion(storeId, inquiryId);
+
+        assertThat(result).isSameAs(inquiry);
+        assertThat(result.getUser()).isSameAs(counselor);
+        verify(inquiryRepository).findByIdAndStoreIdForUpdate(inquiryId, storeId);
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verify(inflowPathOptionRepository).findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId);
+        verify(userRepository).findByIdAndStore_Id(counselorId, storeId);
+    }
+
+    @Test
+    @DisplayName("상담 전환용 문의가 없거나 다른 매장 소속이면 INQUIRY_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_NOT_FOUND);
+
+        verifyNoInteractions(serviceRepository, inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환용 문의가 이미 CONVERTED이면 잠금 획득 후 전환을 차단한다")
+    void loadInquiryForConversionAlreadyConverted() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.CONVERTED)
+                .build();
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_ALREADY_CONVERTED);
+
+        verify(inquiryRepository).findByIdAndStoreIdForUpdate(inquiryId, storeId);
+        verifyNoInteractions(serviceRepository, inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환 시 문의의 서비스가 현재 매장 활성 서비스가 아니면 SERVICE_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionServiceNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        Inquiry inquiry = conversionInquiry(inquiryId, serviceId, UUID.randomUUID(), UUID.randomUUID());
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.SERVICE_NOT_FOUND);
+
+        verifyNoInteractions(inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환 시 문의의 유입경로가 현재 매장 활성 경로가 아니면 INFLOW_PATH_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionInflowPathNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        Inquiry inquiry = conversionInquiry(inquiryId, serviceId, inflowPathId, UUID.randomUUID());
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(inquiry.getService()));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INFLOW_PATH_NOT_FOUND);
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환 시 inquiry.user_id 담당자가 현재 매장 소속이 아니면 COUNSELOR_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionCounselorNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        Inquiry inquiry = conversionInquiry(inquiryId, serviceId, inflowPathId, counselorId);
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(inquiry.getService()));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inquiry.getInflowPathOption()));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.COUNSELOR_NOT_FOUND);
+    }
+
+    @Test
     @DisplayName("문의 등록은 inquiry 테이블에 저장하고 inquiryId와 문의 탭 redirectUrl을 반환한다")
     void createInquiry() {
         UUID storeId = UUID.randomUUID();
@@ -830,5 +990,20 @@ class InquiryServiceTest {
         ReflectionTestUtils.setField(request, "inquiry", inquiry);
 
         return request;
+    }
+
+    private Inquiry conversionInquiry(
+            UUID inquiryId,
+            UUID serviceId,
+            UUID inflowPathId,
+            UUID counselorId
+    ) {
+        return Inquiry.builder()
+                .id(inquiryId)
+                .service(Service.builder().id(serviceId).active(true).build())
+                .inflowPathOption(InflowPathOption.builder().id(inflowPathId).active(true).build())
+                .user(User.builder().id(counselorId).build())
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
     }
 }
