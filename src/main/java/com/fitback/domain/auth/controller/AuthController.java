@@ -1,5 +1,6 @@
 package com.fitback.domain.auth.controller;
 
+import com.fitback.domain.auth.dto.request.EmailVerificationRequest;
 import com.fitback.domain.auth.dto.request.LoginRequest;
 import com.fitback.domain.auth.dto.request.SignupRequest;
 import com.fitback.domain.auth.dto.request.TokenRefreshRequest;
@@ -29,16 +30,26 @@ public class AuthController {
 
     /* 회원가입 */
     @PostMapping("/signup")
-    @Operation(summary = "회원가입", description = "사용자 계정 생성 후 인증 메일 발송")
+    @Operation(summary = "회원가입", description = "이메일 인증 완료 후 추가 정보 입력하여 회원가입")
     public ResponseEntity<ApiResponse<SignupResponse>> signup(
             @Valid @RequestBody SignupRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.onSuccess("회원가입이 완료되었습니다. 이메일을 인증해주세요.",
+                .body(ApiResponse.onSuccess("회원가입이 완료되었습니다.",
                         authService.signup(request)));
     }
 
-    /* 이메일 인증 */
+    /* 이메일 인증 메일 발송 */
+    @PostMapping("/send-verification")
+    @Operation(summary = "이메일 인증 메일 발송", description = "이메일 입력 후 인증 메일 발송")
+    public ResponseEntity<ApiResponse<Void>> sendVerification(
+            @Valid @RequestBody EmailVerificationRequest request
+    ) {
+        authService.sendVerification(request);
+        return ResponseEntity.ok(ApiResponse.onSuccess("인증 메일이 발송되었습니다.", null));
+    }
+
+    /* 이메일 인증 완료 */
     @GetMapping("/verify-email")
     @Operation(summary = "이메일 인증", description = "메일 링크 클릭 시 이메일 인증 처리")
     public ResponseEntity<ApiResponse<Void>> verifyEmail(@RequestParam String token) {

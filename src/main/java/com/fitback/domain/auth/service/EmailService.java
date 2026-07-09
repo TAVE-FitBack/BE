@@ -17,7 +17,7 @@ public class EmailService {
     @Value("${app.base-url}")
     private String baseUrl;
 
-    public void sendVerificationEmail(String to, String token) {
+    public void sendVerification(String to, String token) {
         String link = baseUrl + "/api/auth/verify-email?token=" + token;
 
         SimpleMailMessage message = new SimpleMailMessage();

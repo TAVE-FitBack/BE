@@ -51,10 +51,6 @@ public class User extends BaseTimeEntity {
         this.store = store;
     }
 
-    public void verifyEmail() {
-        this.emailVerified = true;
-    }
-
     public UUID getStoreId() {
         return store != null ? store.getId() : null;
     }
