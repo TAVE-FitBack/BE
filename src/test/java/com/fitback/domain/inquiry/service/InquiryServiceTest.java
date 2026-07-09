@@ -17,6 +17,7 @@ import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
@@ -48,6 +49,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -97,6 +99,9 @@ class InquiryServiceTest {
     @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private InquiryService inquiryService;
 
     @BeforeEach
@@ -110,7 +115,8 @@ class InquiryServiceTest {
                 customerRepository,
                 interestServiceRepository,
                 consultationRepository,
-                customerActivityTimelineRepository
+                customerActivityTimelineRepository,
+                eventPublisher
         );
     }
 
@@ -772,6 +778,7 @@ class InquiryServiceTest {
                 .containsEntry("customerId", customerId)
                 .containsEntry("consultationId", consultationId)
                 .containsEntry("sessionNo", 1);
+        verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
     }
 
     @Test

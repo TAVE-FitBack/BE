@@ -15,6 +15,7 @@ import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
@@ -35,6 +36,7 @@ import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
 import com.fitback.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -63,6 +65,7 @@ public class InquiryService {
     private final InterestServiceRepository interestServiceRepository;
     private final ConsultationRepository consultationRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public InquiryNewResponse getNewInquiryData(UUID storeId) {
         if (storeId == null) {
@@ -190,6 +193,7 @@ public class InquiryService {
 
         inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
         saveInquiryConvertedTimeline(inquiry, context, convertedAt);
+        eventPublisher.publishEvent(new ConsultationCreatedEvent(context.consultation().getId()));
 
         return InquiryConvertToConsultationResponse.builder()
                 .inquiryId(inquiry.getId())
