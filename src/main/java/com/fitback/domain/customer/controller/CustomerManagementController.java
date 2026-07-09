@@ -1,10 +1,13 @@
 package com.fitback.domain.customer.controller;
 
+import com.fitback.domain.customer.dto.request.ConsultationListQuery;
+import com.fitback.domain.customer.dto.response.CustomerManagementConsultationListResponse;
 import com.fitback.domain.customer.dto.response.CustomerManagementSummaryResponse;
 import com.fitback.domain.customer.service.CustomerManagementService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springdoc.core.annotations.ParameterObject;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -30,6 +33,17 @@ public class CustomerManagementController {
             @RequestParam(required = false) String month
     ) {
         CustomerManagementSummaryResponse response = customerManagementService.getSummary(storeId, month);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @GetMapping("/consultations")
+    @Operation(summary = "상담 고객 목록 조회", description = "선택한 월의 상담 고객을 고객당 최신 상담 1건 기준으로 조회합니다.")
+    public ResponseEntity<ApiResponse<CustomerManagementConsultationListResponse>> getConsultations(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @ParameterObject ConsultationListQuery query
+    ) {
+        CustomerManagementConsultationListResponse response =
+                customerManagementService.getConsultations(storeId, query);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }

@@ -7,6 +7,8 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -140,6 +142,191 @@ public class CustomerManagementQueryRepository {
         );
     }
 
+    public ConsultationPageRows findConsultations(
+            UUID storeId,
+            MonthRange range,
+            ConsultationSearchCondition condition,
+            int page,
+            int size
+    ) {
+        String cte = """
+                WITH latest_consultation AS (
+                    SELECT DISTINCT ON (co.customer_id)
+                           co.id,
+                           co.customer_id,
+                           co.user_id,
+                           co.consulted_service_id,
+                           co.consulted_at,
+                           co.session_no,
+                           co.stage,
+                           co.summary
+                    FROM consultation co
+                    JOIN customer c ON c.id = co.customer_id
+                    WHERE c.store_id = :storeId
+                      AND co.consulted_at >= :startAt
+                      AND co.consulted_at < :endAt
+                    ORDER BY co.customer_id, co.session_no DESC, co.id DESC
+                )
+                """;
+
+        String fromAndWhere = """
+                FROM latest_consultation lc
+                JOIN customer c ON c.id = lc.customer_id
+                JOIN service s ON s.id = lc.consulted_service_id
+                JOIN inflow_path_option ip ON ip.id = c.inflow_path_id
+                JOIN users u ON u.id = lc.user_id
+                LEFT JOIN customer_ai_insight cai ON cai.customer_id = c.id
+                WHERE c.store_id = :storeId
+                """;
+
+        StringBuilder filters = new StringBuilder();
+        MapSqlParameterSource params = parameters(storeId, range);
+        appendConsultationFilters(filters, params, condition);
+
+        String countSql = cte + "SELECT COUNT(*) " + fromAndWhere + filters;
+        Long totalElements = jdbcTemplate.queryForObject(countSql, params, Long.class);
+
+        params.addValue("limit", size)
+                .addValue("offset", (long) page * size);
+        String contentSql = cte + """
+                SELECT c.id AS customer_id,
+                       c.name,
+                       c.phone_num,
+                       c.gender,
+                       c.birth_date,
+                       s.id AS service_id,
+                       s.name AS service_name,
+                       ip.id AS inflow_path_id,
+                       ip.name AS inflow_path_name,
+                       lc.stage,
+                       lc.summary,
+                       cai.lead_temperature,
+                       c.status AS customer_status,
+                       lc.consulted_at,
+                       u.id AS counselor_id,
+                       u.nickname AS counselor_name
+                """ + fromAndWhere + filters + """
+                ORDER BY lc.consulted_at DESC, lc.session_no DESC, c.id ASC
+                LIMIT :limit OFFSET :offset
+                """;
+
+        List<ConsultationRow> content = jdbcTemplate.query(
+                contentSql,
+                params,
+                (rs, rowNum) -> new ConsultationRow(
+                        rs.getObject("customer_id", UUID.class),
+                        rs.getString("name"),
+                        rs.getString("phone_num"),
+                        rs.getString("gender"),
+                        rs.getObject("birth_date", LocalDate.class),
+                        rs.getObject("service_id", UUID.class),
+                        rs.getString("service_name"),
+                        rs.getObject("inflow_path_id", UUID.class),
+                        rs.getString("inflow_path_name"),
+                        rs.getString("stage"),
+                        rs.getString("summary"),
+                        rs.getString("lead_temperature"),
+                        rs.getString("customer_status"),
+                        rs.getObject("consulted_at", OffsetDateTime.class),
+                        rs.getObject("counselor_id", UUID.class),
+                        rs.getString("counselor_name")
+                )
+        );
+
+        return new ConsultationPageRows(content, totalElements == null ? 0 : totalElements);
+    }
+
+    public List<NonConversionReasonRow> findNonConversionReasons(Collection<UUID> customerIds) {
+        if (customerIds.isEmpty()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT customer_id, reason_type
+                FROM non_conversion_reason
+                WHERE customer_id IN (:customerIds)
+                ORDER BY customer_id, CASE WHEN role = 'PRIMARY' THEN 0 ELSE 1 END, updated_at DESC, id
+                """;
+
+        return jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("customerIds", customerIds),
+                (rs, rowNum) -> new NonConversionReasonRow(
+                        rs.getObject("customer_id", UUID.class),
+                        rs.getString("reason_type")
+                )
+        );
+    }
+
+    private void appendConsultationFilters(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            ConsultationSearchCondition condition
+    ) {
+        if (condition.keyword() != null) {
+            sql.append("""
+                      AND (
+                          LOWER(c.name) LIKE :keyword
+                          OR LOWER(c.phone_num) LIKE :keyword
+                          OR LOWER(s.name) LIKE :keyword
+                          OR EXISTS (
+                              SELECT 1
+                              FROM interest_service i
+                              JOIN service interest_s ON interest_s.id = i.service_id
+                              WHERE i.customer_id = c.id
+                                AND LOWER(interest_s.name) LIKE :keyword
+                          )
+                      )
+                    """);
+            params.addValue("keyword", "%" + condition.keyword().toLowerCase() + "%");
+        }
+        appendEquals(sql, params, "c.gender", "gender", condition.gender());
+        appendEquals(sql, params, "c.inflow_path_id", "inflowPathId", condition.inflowPathId());
+        appendEquals(sql, params, "lc.stage", "stage", condition.stage());
+        appendEquals(sql, params, "c.status", "status", condition.status());
+        appendEquals(sql, params, "cai.lead_temperature", "leadTemperature", condition.leadTemperature());
+        appendEquals(sql, params, "lc.user_id", "counselorId", condition.counselorId());
+
+        if (condition.serviceId() != null) {
+            sql.append("""
+                      AND (
+                          lc.consulted_service_id = :serviceId
+                          OR EXISTS (
+                              SELECT 1
+                              FROM interest_service i
+                              WHERE i.customer_id = c.id
+                                AND i.service_id = :serviceId
+                          )
+                      )
+                    """);
+            params.addValue("serviceId", condition.serviceId());
+        }
+        if (condition.reasonType() != null) {
+            sql.append("""
+                      AND EXISTS (
+                          SELECT 1
+                          FROM non_conversion_reason ncr
+                          WHERE ncr.customer_id = c.id
+                            AND ncr.reason_type = :reasonType
+                      )
+                    """);
+            params.addValue("reasonType", condition.reasonType());
+        }
+    }
+
+    private void appendEquals(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            String column,
+            String parameterName,
+            Object value
+    ) {
+        if (value != null) {
+            sql.append(" AND ").append(column).append(" = :").append(parameterName).append('\n');
+            params.addValue(parameterName, value);
+        }
+    }
+
     private MapSqlParameterSource parameters(UUID storeId, MonthRange range) {
         LocalDate startDate = range.startInclusive().toLocalDate();
         LocalDate endDate = range.endExclusive().toLocalDate();
@@ -171,6 +358,51 @@ public class CustomerManagementQueryRepository {
             UUID inflowPathId,
             String inflowPathName,
             long customerCount
+    ) {
+    }
+
+    public record ConsultationSearchCondition(
+            String keyword,
+            String gender,
+            UUID serviceId,
+            UUID inflowPathId,
+            String stage,
+            String reasonType,
+            String status,
+            String leadTemperature,
+            UUID counselorId
+    ) {
+    }
+
+    public record ConsultationPageRows(
+            List<ConsultationRow> content,
+            long totalElements
+    ) {
+    }
+
+    public record ConsultationRow(
+            UUID customerId,
+            String name,
+            String phoneNum,
+            String gender,
+            LocalDate birthDate,
+            UUID serviceId,
+            String serviceName,
+            UUID inflowPathId,
+            String inflowPathName,
+            String stage,
+            String summary,
+            String leadTemperature,
+            String customerStatus,
+            OffsetDateTime latestConsultAt,
+            UUID counselorId,
+            String counselorName
+    ) {
+    }
+
+    public record NonConversionReasonRow(
+            UUID customerId,
+            String reasonType
     ) {
     }
 }
