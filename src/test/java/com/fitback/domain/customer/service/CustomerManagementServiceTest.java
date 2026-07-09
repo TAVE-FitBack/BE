@@ -361,4 +361,122 @@ class CustomerManagementServiceTest {
 
         verifyNoInteractions(queryRepository, aiInquiryClient);
     }
+
+    @Test
+    @DisplayName("상담과 문의 목록은 storeId가 없으면 STORE_NOT_ASSIGNED 예외가 발생한다")
+    void rejectMissingStoreIdForLists() {
+        assertManagementError(
+                () -> customerManagementService.getConsultations(null, new ConsultationListQuery()),
+                CustomerManagementErrorCode.STORE_NOT_ASSIGNED
+        );
+        assertManagementError(
+                () -> customerManagementService.getInquiries(null, new InquiryListQuery()),
+                CustomerManagementErrorCode.STORE_NOT_ASSIGNED
+        );
+
+        verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("잘못된 월 형식은 서비스 진입점에서 INVALID_MONTH_FORMAT 예외가 발생한다")
+    void rejectInvalidMonthAtServiceBoundary() {
+        ConsultationListQuery query = new ConsultationListQuery();
+        query.setMonth("2026-13");
+
+        assertManagementError(
+                () -> customerManagementService.getConsultations(UUID.randomUUID(), query),
+                CustomerManagementErrorCode.INVALID_MONTH_FORMAT
+        );
+
+        verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("100자를 초과한 검색어는 INVALID_SEARCH_CONDITION 예외가 발생한다")
+    void rejectInvalidSearchConditionAtServiceBoundary() {
+        InquiryListQuery query = new InquiryListQuery();
+        query.setKeyword("가".repeat(101));
+
+        assertManagementError(
+                () -> customerManagementService.getInquiries(UUID.randomUUID(), query),
+                CustomerManagementErrorCode.INVALID_SEARCH_CONDITION
+        );
+
+        verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("허용 범위를 벗어난 페이지는 INVALID_PAGE_REQUEST 예외가 발생한다")
+    void rejectInvalidPageAtServiceBoundary() {
+        ConsultationListQuery query = new ConsultationListQuery();
+        query.setPage(-1);
+
+        assertManagementError(
+                () -> customerManagementService.getConsultations(UUID.randomUUID(), query),
+                CustomerManagementErrorCode.INVALID_PAGE_REQUEST
+        );
+
+        verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("타 매장 서비스 필터는 INVALID_FILTER_CONDITION 예외가 발생한다")
+    void rejectOutOfStoreServiceFilter() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        ConsultationListQuery query = new ConsultationListQuery();
+        query.setServiceId(serviceId);
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertManagementError(
+                () -> customerManagementService.getConsultations(storeId, query),
+                CustomerManagementErrorCode.INVALID_FILTER_CONDITION
+        );
+
+        verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("타 매장 방문경로 필터는 INVALID_FILTER_CONDITION 예외가 발생한다")
+    void rejectOutOfStoreInflowPathFilter() {
+        UUID storeId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        ConsultationListQuery query = new ConsultationListQuery();
+        query.setInflowPathId(inflowPathId);
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertManagementError(
+                () -> customerManagementService.getConsultations(storeId, query),
+                CustomerManagementErrorCode.INVALID_FILTER_CONDITION
+        );
+
+        verifyNoInteractions(queryRepository);
+    }
+
+    @Test
+    @DisplayName("타 매장 담당자 필터는 INVALID_FILTER_CONDITION 예외가 발생한다")
+    void rejectOutOfStoreCounselorFilter() {
+        UUID storeId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        InquiryListQuery query = new InquiryListQuery();
+        query.setCounselorId(counselorId);
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertManagementError(
+                () -> customerManagementService.getInquiries(storeId, query),
+                CustomerManagementErrorCode.INVALID_FILTER_CONDITION
+        );
+
+        verifyNoInteractions(queryRepository, aiInquiryClient);
+    }
+
+    private void assertManagementError(Runnable action, CustomerManagementErrorCode expectedErrorCode) {
+        assertThatThrownBy(action::run)
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(expectedErrorCode);
+    }
 }

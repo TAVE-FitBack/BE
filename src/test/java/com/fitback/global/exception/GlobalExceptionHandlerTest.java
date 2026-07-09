@@ -1,6 +1,7 @@
 package com.fitback.global.exception;
 
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.customer.exception.CustomerManagementErrorCode;
 import com.fitback.domain.inquiry.exception.InquiryErrorCode;
 import com.fitback.global.response.ApiResponse;
 import org.junit.jupiter.api.DisplayName;
@@ -118,6 +119,14 @@ class GlobalExceptionHandlerTest {
         assertBusinessError(InquiryErrorCode.INFLOW_PATH_NOT_FOUND, HttpStatus.NOT_FOUND);
         assertBusinessError(InquiryErrorCode.COUNSELOR_NOT_FOUND, HttpStatus.NOT_FOUND);
         assertBusinessError(InquiryErrorCode.AI_CHECK_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+
+    @Test
+    @DisplayName("상담고객관리 예외는 ApiResponse에 동일한 코드와 400 상태로 반환한다")
+    void customerManagementBusinessErrors() {
+        for (CustomerManagementErrorCode errorCode : CustomerManagementErrorCode.values()) {
+            assertBusinessError(errorCode, HttpStatus.BAD_REQUEST);
+        }
     }
 
     private void assertBusinessError(BaseErrorCode errorCode, HttpStatus status) {
