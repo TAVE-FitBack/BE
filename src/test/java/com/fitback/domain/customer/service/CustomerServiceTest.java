@@ -1397,6 +1397,7 @@ class CustomerServiceTest {
         assertThat(response.isNextActionRegenerationAvailable()).isFalse();
         assertThat(customer.getStatus()).isEqualTo(CustomerStatus.REGISTERED);
         assertThat(customer.getRegisteredService()).isEqualTo(registeredService);
+        assertThat(customer.getRegisteredAt()).isNotNull();
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED

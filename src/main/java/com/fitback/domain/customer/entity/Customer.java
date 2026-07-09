@@ -10,6 +10,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Builder
@@ -58,15 +59,21 @@ public class Customer extends BaseTimeEntity {
     @Column(nullable = false, length = 20)
     private CustomerStatus status;
 
+    @Column(name = "registered_at")
+    private OffsetDateTime registeredAt;
+
     @Column(name = "first_consult_at", nullable = false)
     private LocalDate firstConsultAt;
 
     @Column(name = "latest_consult_at", nullable = false)
     private LocalDate latestConsultAt;
 
-    public void markRegistered(Service registeredService) {
+    public void markRegistered(Service registeredService, OffsetDateTime registeredAt) {
         this.registeredService = registeredService;
         this.status = CustomerStatus.REGISTERED;
+        if (this.registeredAt == null) {
+            this.registeredAt = registeredAt;
+        }
     }
 
     public void markStatus(CustomerStatus status) {

@@ -553,7 +553,7 @@ public class CustomerService {
             Service registeredService = serviceRepository
                     .findByIdAndStoreIdAndActiveTrue(request.getRegisteredServiceId(), storeId)
                     .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
-            customer.markRegistered(registeredService);
+            customer.markRegistered(registeredService, OffsetDateTime.now());
         } else {
             customer.markStatus(afterStatus);
         }
