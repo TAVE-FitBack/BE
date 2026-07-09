@@ -3,6 +3,7 @@ package com.fitback.domain.inquiry.controller;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCreateRequest;
 import com.fitback.domain.inquiry.dto.response.InquiryCreateResponse;
+import com.fitback.domain.inquiry.dto.response.InquiryConvertToConsultationResponse;
 import com.fitback.domain.inquiry.dto.response.InquiryNewResponse;
 import com.fitback.domain.inquiry.service.InquiryService;
 import com.fitback.global.response.ApiResponse;
@@ -59,6 +60,17 @@ public class InquiryController {
     ) {
         inquiryService.deleteInquiry(storeId, inquiryId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{inquiryId}/convert-to-consultation")
+    @Operation(summary = "문의 상담 전환", description = "문의 기록을 고객의 상담 기록으로 전환합니다.")
+    public ResponseEntity<ApiResponse<InquiryConvertToConsultationResponse>> convertToConsultation(
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @PathVariable UUID inquiryId
+    ) {
+        InquiryConvertToConsultationResponse response = inquiryService.convertInquiry(storeId, inquiryId);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(response));
     }
 
     @PostMapping

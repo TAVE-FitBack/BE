@@ -23,6 +23,7 @@ import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCreateRequest;
 import com.fitback.domain.inquiry.dto.response.InquiryCreateResponse;
+import com.fitback.domain.inquiry.dto.response.InquiryConvertToConsultationResponse;
 import com.fitback.domain.inquiry.dto.response.InquiryNewResponse;
 import com.fitback.domain.inquiry.entity.Inquiry;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
@@ -737,9 +738,16 @@ class InquiryServiceTest {
         doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
         doReturn(context).when(service).resolveCustomerConversion(inquiry);
 
-        InquiryConversionContext result = service.convertInquiry(storeId, inquiryId);
+        InquiryConvertToConsultationResponse result = service.convertInquiry(storeId, inquiryId);
 
-        assertThat(result).isSameAs(context);
+        assertThat(result.getInquiryId()).isEqualTo(inquiryId);
+        assertThat(result.getCustomerId()).isEqualTo(customerId);
+        assertThat(result.getConsultationId()).isEqualTo(consultationId);
+        assertThat(result.getSessionNo()).isEqualTo(1);
+        assertThat(result.getInquiryStatus()).isEqualTo(InquiryStatus.CONVERTED);
+        assertThat(result.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+        assertThat(result.getRedirectUrl())
+                .isEqualTo("/customers/manage?tab=consultation&customerId=" + customerId);
         assertThat(inquiry.getInquiryStatus()).isEqualTo(InquiryStatus.CONVERTED);
         assertThat(inquiry.getConvertedCustomer()).isSameAs(customer);
         assertThat(inquiry.getConvertedConsultation()).isSameAs(consultation);

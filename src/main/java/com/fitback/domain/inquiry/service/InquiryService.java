@@ -21,6 +21,7 @@ import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCreateRequest;
 import com.fitback.domain.inquiry.dto.response.InquiryCreateResponse;
+import com.fitback.domain.inquiry.dto.response.InquiryConvertToConsultationResponse;
 import com.fitback.domain.inquiry.dto.response.InquiryNewResponse;
 import com.fitback.domain.inquiry.dto.response.InquiryStatusInfo;
 import com.fitback.domain.inquiry.entity.Inquiry;
@@ -50,6 +51,8 @@ import java.util.UUID;
 public class InquiryService {
 
     private static final String INQUIRY_TAB_REDIRECT_URL = "/customers/manage?tab=inquiry";
+    private static final String CONSULTATION_TAB_REDIRECT_URL =
+            "/customers/manage?tab=consultation&customerId=";
 
     private final ServiceRepository serviceRepository;
     private final InflowPathOptionRepository inflowPathOptionRepository;
@@ -180,7 +183,7 @@ public class InquiryService {
     }
 
     @Transactional
-    public InquiryConversionContext convertInquiry(UUID storeId, UUID inquiryId) {
+    public InquiryConvertToConsultationResponse convertInquiry(UUID storeId, UUID inquiryId) {
         Inquiry inquiry = loadInquiryForConversion(storeId, inquiryId);
         InquiryConversionContext context = resolveCustomerConversion(inquiry);
         OffsetDateTime convertedAt = OffsetDateTime.now();
@@ -188,7 +191,15 @@ public class InquiryService {
         inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
         saveInquiryConvertedTimeline(inquiry, context, convertedAt);
 
-        return context;
+        return InquiryConvertToConsultationResponse.builder()
+                .inquiryId(inquiry.getId())
+                .customerId(context.customer().getId())
+                .consultationId(context.consultation().getId())
+                .sessionNo(context.consultation().getSessionNo())
+                .inquiryStatus(inquiry.getInquiryStatus())
+                .aiAnalysisStatus(context.consultation().getAiAnalysisStatus())
+                .redirectUrl(CONSULTATION_TAB_REDIRECT_URL + context.customer().getId())
+                .build();
     }
 
     InquiryConversionContext resolveCustomerConversion(Inquiry inquiry) {
