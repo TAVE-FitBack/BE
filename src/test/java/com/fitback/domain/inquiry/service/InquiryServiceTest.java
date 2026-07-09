@@ -50,9 +50,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,6 +65,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -814,6 +818,81 @@ class InquiryServiceTest {
         assertThat(captor.getValue().getAfterValue())
                 .containsEntry("newCustomerCreated", false)
                 .containsEntry("sessionNo", 3);
+    }
+
+    @Test
+    @DisplayName("신규 고객 연락처 unique 제약 충돌은 CUSTOMER_DUPLICATE_CONFLICT로 변환한다")
+    void convertInquiryMapsCustomerPhoneConstraintConflict() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        InquiryService service = spy(inquiryService);
+        DataIntegrityViolationException conflict = new DataIntegrityViolationException(
+                "customer insert failed",
+                new SQLException("duplicate key violates constraint uk_customer_store_phone")
+        );
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doThrow(conflict).when(service).resolveCustomerConversion(inquiry);
+
+        assertThatThrownBy(() -> service.convertInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.CUSTOMER_DUPLICATE_CONFLICT);
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("그 외 상담 전환 저장 제약 충돌은 CONSULTATION_CREATE_FAILED로 변환한다")
+    void convertInquiryMapsConsultationConstraintConflict() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        InquiryService service = spy(inquiryService);
+        DataIntegrityViolationException conflict = new DataIntegrityViolationException(
+                "consultation insert failed",
+                new SQLException("duplicate key violates constraint uk_consultation_customer_session")
+        );
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doThrow(conflict).when(service).resolveCustomerConversion(inquiry);
+
+        assertThatThrownBy(() -> service.convertInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.CONSULTATION_CREATE_FAILED);
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("상담 전환 DB 저장 실패는 CONSULTATION_CREATE_FAILED로 변환한다")
+    void convertInquiryMapsDataAccessFailure() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        InquiryService service = spy(inquiryService);
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doThrow(new DataAccessResourceFailureException("database unavailable"))
+                .when(service).resolveCustomerConversion(inquiry);
+
+        assertThatThrownBy(() -> service.convertInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.CONSULTATION_CREATE_FAILED);
+
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test

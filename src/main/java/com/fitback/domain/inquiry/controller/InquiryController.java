@@ -91,6 +91,14 @@ public class InquiryController {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(
                     responseCode = "404",
                     description = "문의, 서비스, 유입경로 또는 상담 담당자를 찾을 수 없음"
+            ),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(
+                    responseCode = "409",
+                    description = "신규 고객 연락처 unique 제약 충돌"
+            ),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(
+                    responseCode = "500",
+                    description = "상담 전환 데이터 저장 실패"
             )
     })
     public ResponseEntity<ApiResponse<InquiryConvertToConsultationResponse>> convertToConsultation(

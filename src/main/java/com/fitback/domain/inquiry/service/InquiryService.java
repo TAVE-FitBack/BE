@@ -37,6 +37,8 @@ import com.fitback.global.exception.BusinessException;
 import com.fitback.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -55,6 +57,7 @@ public class InquiryService {
     private static final String INQUIRY_TAB_REDIRECT_URL = "/customers/manage?tab=inquiry";
     private static final String CONSULTATION_TAB_REDIRECT_URL =
             "/customers/manage?tab=consultation&customerId=";
+    private static final String CUSTOMER_PHONE_UNIQUE_CONSTRAINT = "UK_CUSTOMER_STORE_PHONE";
 
     private final ServiceRepository serviceRepository;
     private final InflowPathOptionRepository inflowPathOptionRepository;
@@ -188,22 +191,29 @@ public class InquiryService {
     @Transactional
     public InquiryConvertToConsultationResponse convertInquiry(UUID storeId, UUID inquiryId) {
         Inquiry inquiry = loadInquiryForConversion(storeId, inquiryId);
-        InquiryConversionContext context = resolveCustomerConversion(inquiry);
-        OffsetDateTime convertedAt = OffsetDateTime.now();
+        try {
+            InquiryConversionContext context = resolveCustomerConversion(inquiry);
+            OffsetDateTime convertedAt = OffsetDateTime.now();
 
-        inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
-        saveInquiryConvertedTimeline(inquiry, context, convertedAt);
-        eventPublisher.publishEvent(new ConsultationCreatedEvent(context.consultation().getId()));
+            inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
+            saveInquiryConvertedTimeline(inquiry, context, convertedAt);
+            consultationRepository.flush();
+            eventPublisher.publishEvent(new ConsultationCreatedEvent(context.consultation().getId()));
 
-        return InquiryConvertToConsultationResponse.builder()
-                .inquiryId(inquiry.getId())
-                .customerId(context.customer().getId())
-                .consultationId(context.consultation().getId())
-                .sessionNo(context.consultation().getSessionNo())
-                .inquiryStatus(inquiry.getInquiryStatus())
-                .aiAnalysisStatus(context.consultation().getAiAnalysisStatus())
-                .redirectUrl(CONSULTATION_TAB_REDIRECT_URL + context.customer().getId())
-                .build();
+            return InquiryConvertToConsultationResponse.builder()
+                    .inquiryId(inquiry.getId())
+                    .customerId(context.customer().getId())
+                    .consultationId(context.consultation().getId())
+                    .sessionNo(context.consultation().getSessionNo())
+                    .inquiryStatus(inquiry.getInquiryStatus())
+                    .aiAnalysisStatus(context.consultation().getAiAnalysisStatus())
+                    .redirectUrl(CONSULTATION_TAB_REDIRECT_URL + context.customer().getId())
+                    .build();
+        } catch (DataIntegrityViolationException e) {
+            throw new BusinessException(resolveConversionConstraintError(e));
+        } catch (DataAccessException e) {
+            throw new BusinessException(InquiryErrorCode.CONSULTATION_CREATE_FAILED);
+        }
     }
 
     InquiryConversionContext resolveCustomerConversion(Inquiry inquiry) {
@@ -313,6 +323,14 @@ public class InquiryService {
                 .afterValue(afterValue)
                 .occurredAt(convertedAt)
                 .build());
+    }
+
+    private InquiryErrorCode resolveConversionConstraintError(DataIntegrityViolationException e) {
+        String message = e.getMostSpecificCause().getMessage();
+        if (message != null && message.toUpperCase().contains(CUSTOMER_PHONE_UNIQUE_CONSTRAINT)) {
+            return InquiryErrorCode.CUSTOMER_DUPLICATE_CONFLICT;
+        }
+        return InquiryErrorCode.CONSULTATION_CREATE_FAILED;
     }
 
     @Transactional
