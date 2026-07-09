@@ -104,4 +104,15 @@ public class Inquiry extends BaseTimeEntity {
 
     @Column(name = "converted_at")
     private OffsetDateTime convertedAt;
+
+    public void markConverted(
+            Customer convertedCustomer,
+            Consultation convertedConsultation,
+            OffsetDateTime convertedAt
+    ) {
+        this.inquiryStatus = InquiryStatus.CONVERTED;
+        this.convertedCustomer = convertedCustomer;
+        this.convertedConsultation = convertedConsultation;
+        this.convertedAt = convertedAt;
+    }
 }

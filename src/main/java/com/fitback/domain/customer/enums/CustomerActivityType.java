@@ -3,6 +3,7 @@ package com.fitback.domain.customer.enums;
 public enum CustomerActivityType {
     CONSULTATION_CREATED,
     RECONSULTATION_CREATED,
+    INQUIRY_CONVERTED_TO_CONSULTATION,
     AI_ANALYSIS_COMPLETED,
     AI_ANALYSIS_FAILED,
     AI_ANALYSIS_MANUALLY_UPDATED,
