@@ -9,6 +9,22 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum InquiryErrorCode implements BaseErrorCode {
 
+    INQUIRY_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "문의를 찾을 수 없습니다."
+    ),
+    INQUIRY_ALREADY_CONVERTED(
+            HttpStatus.BAD_REQUEST,
+            "이미 상담으로 전환된 문의입니다."
+    ),
+    CUSTOMER_DUPLICATE_CONFLICT(
+            HttpStatus.CONFLICT,
+            "동일한 연락처의 고객이 동시에 생성되어 충돌이 발생했습니다."
+    ),
+    CONSULTATION_CREATE_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "문의 전환 상담을 생성하지 못했습니다."
+    ),
     SERVICE_NOT_FOUND(
             HttpStatus.NOT_FOUND,
             "선택한 서비스를 찾을 수 없습니다."

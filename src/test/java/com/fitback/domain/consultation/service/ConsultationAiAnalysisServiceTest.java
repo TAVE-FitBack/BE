@@ -109,7 +109,20 @@ class ConsultationAiAnalysisServiceTest {
     void analyzeConsultationSavesSuccessResult() {
         UUID consultationId = UUID.randomUUID();
         UUID followUpId = UUID.randomUUID();
-        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        Customer customer = customer();
+        Service service = service();
+        Consultation consultation = Consultation.builder()
+                .id(consultationId)
+                .customer(customer)
+                .user(user(customer.getStore()))
+                .consultedService(service)
+                .consultedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.INQUIRY)
+                .rawText("문의 전환 상담 원문")
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build();
         AiConsultationAnalyzeResponse aiResponse = aiResponse();
         FollowUp savedFollowUp = FollowUp.builder()
                 .id(followUpId)
@@ -139,6 +152,11 @@ class ConsultationAiAnalysisServiceTest {
         verify(aiConsultationClient).analyzeConsultation(requestCaptor.capture());
         assertThat(requestCaptor.getValue().getCustomer().getCustomerId()).isEqualTo(consultation.getCustomer().getId());
         assertThat(requestCaptor.getValue().getService().getServiceName()).isEqualTo("PT");
+        assertThat(requestCaptor.getValue()).isInstanceOf(AiConsultationAnalyzeRequest.class);
+        assertThat(requestCaptor.getValue().getConsultation().getSourceType())
+                .isEqualTo(ConsultationSourceType.INQUIRY);
+        assertThat(requestCaptor.getValue().getConsultation().getRawText())
+                .isEqualTo("문의 전환 상담 원문");
 
         ArgumentCaptor<CustomerAiInsight> aiInsightCaptor = ArgumentCaptor.forClass(CustomerAiInsight.class);
         verify(customerAiInsightRepository).save(aiInsightCaptor.capture());

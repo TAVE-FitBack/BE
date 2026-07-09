@@ -1,14 +1,30 @@
 package com.fitback.domain.inquiry.service;
 
 import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.customer.entity.Customer;
+import com.fitback.domain.customer.entity.CustomerActivityTimeline;
+import com.fitback.domain.customer.entity.InterestService;
+import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.CustomerActivityType;
+import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
+import com.fitback.domain.customer.repository.CustomerRepository;
+import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.customer.repository.InterestServiceRepository;
+import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationSourceType;
+import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
+import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCreateRequest;
 import com.fitback.domain.inquiry.dto.response.InquiryCreateResponse;
+import com.fitback.domain.inquiry.dto.response.InquiryConvertToConsultationResponse;
 import com.fitback.domain.inquiry.dto.response.InquiryNewResponse;
 import com.fitback.domain.inquiry.entity.Inquiry;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
@@ -27,13 +43,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,9 +64,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -65,6 +91,21 @@ class InquiryServiceTest {
     @Mock
     private AiInquiryClient aiInquiryClient;
 
+    @Mock
+    private CustomerRepository customerRepository;
+
+    @Mock
+    private InterestServiceRepository interestServiceRepository;
+
+    @Mock
+    private ConsultationRepository consultationRepository;
+
+    @Mock
+    private CustomerActivityTimelineRepository customerActivityTimelineRepository;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private InquiryService inquiryService;
 
     @BeforeEach
@@ -74,7 +115,12 @@ class InquiryServiceTest {
                 inflowPathOptionRepository,
                 userRepository,
                 inquiryRepository,
-                aiInquiryClient
+                aiInquiryClient,
+                customerRepository,
+                interestServiceRepository,
+                consultationRepository,
+                customerActivityTimelineRepository,
+                eventPublisher
         );
     }
 
@@ -246,6 +292,607 @@ class InquiryServiceTest {
 
         verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
         verifyNoInteractions(inflowPathOptionRepository, userRepository);
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = InquiryStatus.class,
+            names = {"RECEIVED", "VISIT_SCHEDULED", "VISIT_CANCELED"}
+    )
+    @DisplayName("상담으로 전환되지 않은 문의는 물리 삭제한다")
+    void deleteInquiry(InquiryStatus inquiryStatus) {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(inquiryStatus)
+                .build();
+
+        when(inquiryRepository.findByIdAndStore_Id(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+
+        inquiryService.deleteInquiry(storeId, inquiryId);
+
+        verify(inquiryRepository).findByIdAndStore_Id(inquiryId, storeId);
+        verify(inquiryRepository).delete(inquiry);
+    }
+
+    @Test
+    @DisplayName("문의 삭제 시 매장이 없으면 STORE_NOT_ASSIGNED 예외가 발생한다")
+    void deleteInquiryStoreNotAssigned() {
+        assertThatThrownBy(() -> inquiryService.deleteInquiry(null, UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.STORE_NOT_ASSIGNED);
+
+        verifyNoInteractions(inquiryRepository);
+    }
+
+    @Test
+    @DisplayName("문의가 없거나 다른 매장 소속이면 INQUIRY_NOT_FOUND 예외가 발생한다")
+    void deleteInquiryNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+
+        when(inquiryRepository.findByIdAndStore_Id(inquiryId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.deleteInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_NOT_FOUND);
+
+        verify(inquiryRepository).findByIdAndStore_Id(inquiryId, storeId);
+        verify(inquiryRepository, never()).delete(any(Inquiry.class));
+    }
+
+    @Test
+    @DisplayName("이미 상담으로 전환된 문의는 삭제하지 않는다")
+    void deleteInquiryAlreadyConverted() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.CONVERTED)
+                .build();
+
+        when(inquiryRepository.findByIdAndStore_Id(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+
+        assertThatThrownBy(() -> inquiryService.deleteInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_ALREADY_CONVERTED);
+
+        verify(inquiryRepository).findByIdAndStore_Id(inquiryId, storeId);
+        verify(inquiryRepository, never()).delete(any(Inquiry.class));
+    }
+
+    @Test
+    @DisplayName("상담 전환용 문의를 비관적 잠금으로 조회하고 서비스, 유입경로, 문의 담당자를 검증한다")
+    void loadInquiryForConversion() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .active(true)
+                .build();
+        InflowPathOption inflowPath = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(counselorId)
+                .store(store)
+                .build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .service(service)
+                .inflowPathOption(inflowPath)
+                .user(counselor)
+                .inquiryStatus(InquiryStatus.VISIT_SCHEDULED)
+                .build();
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPath));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId))
+                .thenReturn(Optional.of(counselor));
+
+        Inquiry result = inquiryService.loadInquiryForConversion(storeId, inquiryId);
+
+        assertThat(result).isSameAs(inquiry);
+        assertThat(result.getUser()).isSameAs(counselor);
+        verify(inquiryRepository).findByIdAndStoreIdForUpdate(inquiryId, storeId);
+        verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
+        verify(inflowPathOptionRepository).findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId);
+        verify(userRepository).findByIdAndStore_Id(counselorId, storeId);
+    }
+
+    @Test
+    @DisplayName("상담 전환용 문의가 없거나 다른 매장 소속이면 INQUIRY_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_NOT_FOUND);
+
+        verifyNoInteractions(serviceRepository, inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환용 문의가 이미 CONVERTED이면 잠금 획득 후 전환을 차단한다")
+    void loadInquiryForConversionAlreadyConverted() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.CONVERTED)
+                .build();
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INQUIRY_ALREADY_CONVERTED);
+
+        verify(inquiryRepository).findByIdAndStoreIdForUpdate(inquiryId, storeId);
+        verifyNoInteractions(serviceRepository, inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환 시 문의의 서비스가 현재 매장 활성 서비스가 아니면 SERVICE_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionServiceNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        Inquiry inquiry = conversionInquiry(inquiryId, serviceId, UUID.randomUUID(), UUID.randomUUID());
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.SERVICE_NOT_FOUND);
+
+        verifyNoInteractions(inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환 시 문의의 유입경로가 현재 매장 활성 경로가 아니면 INFLOW_PATH_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionInflowPathNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        Inquiry inquiry = conversionInquiry(inquiryId, serviceId, inflowPathId, UUID.randomUUID());
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(inquiry.getService()));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.INFLOW_PATH_NOT_FOUND);
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    @DisplayName("상담 전환 시 inquiry.user_id 담당자가 현재 매장 소속이 아니면 COUNSELOR_NOT_FOUND 예외가 발생한다")
+    void loadInquiryForConversionCounselorNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        Inquiry inquiry = conversionInquiry(inquiryId, serviceId, inflowPathId, counselorId);
+
+        when(inquiryRepository.findByIdAndStoreIdForUpdate(inquiryId, storeId))
+                .thenReturn(Optional.of(inquiry));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(inquiry.getService()));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inquiry.getInflowPathOption()));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> inquiryService.loadInquiryForConversion(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.COUNSELOR_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("동일 매장과 연락처의 고객이 없으면 문의 정보로 PENDING 고객과 관심 서비스, 첫 상담을 생성한다")
+    void resolveCustomerConversionCreatesCustomerAndFirstConsultation() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime inquiredAt = OffsetDateTime.parse("2026-07-01T14:30:00+09:00");
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder().id(UUID.randomUUID()).store(store).build();
+        InflowPathOption inflowPath = InflowPathOption.builder()
+                .id(UUID.randomUUID())
+                .store(store)
+                .build();
+        User counselor = User.builder().id(UUID.randomUUID()).store(store).build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .service(service)
+                .user(counselor)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPath)
+                .inquiryStatus(InquiryStatus.VISIT_SCHEDULED)
+                .inquiredAt(inquiredAt)
+                .rawText("방문 상담 문의 원문")
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreIdForUpdate(inquiry.getPhoneNum(), storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenAnswer(invocation -> {
+                    Customer customer = invocation.getArgument(0);
+                    ReflectionTestUtils.setField(customer, "id", customerId);
+                    return customer;
+                });
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenAnswer(invocation -> {
+                    Consultation consultation = invocation.getArgument(0);
+                    ReflectionTestUtils.setField(consultation, "id", consultationId);
+                    return consultation;
+                });
+
+        InquiryConversionContext result = inquiryService.resolveCustomerConversion(inquiry);
+
+        assertThat(result.customerCreated()).isTrue();
+        assertThat(result.customer().getId()).isEqualTo(customerId);
+        assertThat(result.consultation().getId()).isEqualTo(consultationId);
+
+        ArgumentCaptor<Customer> customerCaptor = ArgumentCaptor.forClass(Customer.class);
+        verify(customerRepository).save(customerCaptor.capture());
+        Customer customer = customerCaptor.getValue();
+        assertThat(customer.getStore()).isSameAs(store);
+        assertThat(customer.getRegisteredService()).isNull();
+        assertThat(customer.getName()).isEqualTo(inquiry.getName());
+        assertThat(customer.getGender()).isEqualTo(inquiry.getGender());
+        assertThat(customer.getBirthDate()).isEqualTo(inquiry.getBirthDate());
+        assertThat(customer.getPhoneNum()).isEqualTo(inquiry.getPhoneNum());
+        assertThat(customer.getPreferredContactChannel()).isEqualTo(inquiry.getPreferredContactChannel());
+        assertThat(customer.getInflowPathOption()).isSameAs(inflowPath);
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.PENDING);
+        assertThat(customer.getRegisteredAt()).isNull();
+        assertThat(customer.getFirstConsultAt()).isEqualTo(inquiredAt.toLocalDate());
+        assertThat(customer.getLatestConsultAt()).isEqualTo(inquiredAt.toLocalDate());
+
+        ArgumentCaptor<InterestService> interestServiceCaptor = ArgumentCaptor.forClass(InterestService.class);
+        verify(interestServiceRepository).save(interestServiceCaptor.capture());
+        assertThat(interestServiceCaptor.getValue().getCustomer()).isSameAs(customer);
+        assertThat(interestServiceCaptor.getValue().getService()).isSameAs(service);
+
+        ArgumentCaptor<Consultation> consultationCaptor = ArgumentCaptor.forClass(Consultation.class);
+        verify(consultationRepository).save(consultationCaptor.capture());
+        Consultation consultation = consultationCaptor.getValue();
+        assertThat(consultation.getCustomer()).isSameAs(customer);
+        assertThat(consultation.getUser()).isSameAs(counselor);
+        assertThat(consultation.getConsultedService()).isSameAs(service);
+        assertThat(consultation.getConsultedAt()).isEqualTo(inquiredAt);
+        assertThat(consultation.getSessionNo()).isEqualTo(1);
+        assertThat(consultation.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
+        assertThat(consultation.getSourceType()).isEqualTo(ConsultationSourceType.INQUIRY);
+        assertThat(consultation.getRawText()).isEqualTo(inquiry.getRawText());
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("동일 매장과 연락처의 기존 고객이 있으면 정보를 유지하고 다음 회차 상담을 생성한다")
+    void resolveCustomerConversionCreatesConsultationForExistingCustomer() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        OffsetDateTime inquiredAt = OffsetDateTime.parse("2026-07-02T10:00:00+09:00");
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder().id(serviceId).store(store).build();
+        User counselor = User.builder().id(UUID.randomUUID()).store(store).build();
+        Customer existingCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .name("기존 이름")
+                .phoneNum("010-1234-5678")
+                .status(CustomerStatus.PENDING)
+                .firstConsultAt(LocalDate.of(2026, 6, 1))
+                .latestConsultAt(LocalDate.of(2026, 6, 15))
+                .build();
+        Inquiry inquiry = Inquiry.builder()
+                .store(store)
+                .service(service)
+                .user(counselor)
+                .name("문의 이름")
+                .phoneNum("010-1234-5678")
+                .inquiredAt(inquiredAt)
+                .rawText("기존 고객 문의 원문")
+                .build();
+        Consultation previousConsultation = Consultation.builder()
+                .customer(existingCustomer)
+                .sessionNo(2)
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreIdForUpdate(inquiry.getPhoneNum(), storeId))
+                .thenReturn(Optional.of(existingCustomer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(previousConsultation));
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interestServiceRepository.existsByCustomerIdAndServiceId(customerId, serviceId))
+                .thenReturn(true);
+
+        InquiryConversionContext result = inquiryService.resolveCustomerConversion(inquiry);
+
+        assertThat(result.customerCreated()).isFalse();
+        assertThat(result.customer()).isSameAs(existingCustomer);
+        assertThat(result.customer().getName()).isEqualTo("기존 이름");
+        assertThat(result.customer().getFirstConsultAt()).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(result.customer().getLatestConsultAt()).isEqualTo(inquiredAt.toLocalDate());
+
+        Consultation consultation = result.consultation();
+        assertThat(consultation.getCustomer()).isSameAs(existingCustomer);
+        assertThat(consultation.getUser()).isSameAs(counselor);
+        assertThat(consultation.getConsultedService()).isSameAs(service);
+        assertThat(consultation.getConsultedAt()).isEqualTo(inquiredAt);
+        assertThat(consultation.getSessionNo()).isEqualTo(3);
+        assertThat(consultation.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
+        assertThat(consultation.getSourceType()).isEqualTo(ConsultationSourceType.INQUIRY);
+        assertThat(consultation.getRawText()).isEqualTo(inquiry.getRawText());
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+
+        verify(customerRepository, never()).save(any(Customer.class));
+        verify(interestServiceRepository).existsByCustomerIdAndServiceId(customerId, serviceId);
+        verify(interestServiceRepository, never()).save(any(InterestService.class));
+    }
+
+    @Test
+    @DisplayName("기존 고객에게 문의 서비스 관심 정보가 없으면 한 번만 추가한다")
+    void resolveCustomerConversionAddsMissingInterestService() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder().id(serviceId).store(store).build();
+        Customer existingCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .latestConsultAt(LocalDate.of(2026, 6, 1))
+                .build();
+        Inquiry inquiry = Inquiry.builder()
+                .store(store)
+                .service(service)
+                .user(User.builder().id(UUID.randomUUID()).store(store).build())
+                .phoneNum("010-1234-5678")
+                .inquiredAt(OffsetDateTime.parse("2026-07-02T10:00:00+09:00"))
+                .rawText("문의 원문")
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreIdForUpdate(inquiry.getPhoneNum(), storeId))
+                .thenReturn(Optional.of(existingCustomer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.empty());
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interestServiceRepository.existsByCustomerIdAndServiceId(customerId, serviceId))
+                .thenReturn(false);
+
+        InquiryConversionContext result = inquiryService.resolveCustomerConversion(inquiry);
+
+        assertThat(result.consultation().getSessionNo()).isEqualTo(1);
+        ArgumentCaptor<InterestService> captor = ArgumentCaptor.forClass(InterestService.class);
+        verify(interestServiceRepository).save(captor.capture());
+        assertThat(captor.getValue().getCustomer()).isSameAs(existingCustomer);
+        assertThat(captor.getValue().getService()).isSameAs(service);
+    }
+
+    @Test
+    @DisplayName("신규 고객 전환 완료 시 문의 상태와 전환 정보를 저장하고 타임라인에 신규 생성 여부를 기록한다")
+    void convertInquiryUpdatesInquiryAndSavesNewCustomerTimeline() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        User counselor = User.builder().id(UUID.randomUUID()).store(store).build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .user(counselor)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        Customer customer = Customer.builder().id(customerId).store(store).build();
+        Consultation consultation = Consultation.builder()
+                .id(consultationId)
+                .customer(customer)
+                .sessionNo(1)
+                .build();
+        InquiryConversionContext context = InquiryConversionContext.newCustomer(customer, consultation);
+        InquiryService service = spy(inquiryService);
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doReturn(context).when(service).resolveCustomerConversion(inquiry);
+
+        InquiryConvertToConsultationResponse result = service.convertInquiry(storeId, inquiryId);
+
+        assertThat(result.getInquiryId()).isEqualTo(inquiryId);
+        assertThat(result.getCustomerId()).isEqualTo(customerId);
+        assertThat(result.getConsultationId()).isEqualTo(consultationId);
+        assertThat(result.getSessionNo()).isEqualTo(1);
+        assertThat(result.getInquiryStatus()).isEqualTo(InquiryStatus.CONVERTED);
+        assertThat(result.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+        assertThat(result.getRedirectUrl())
+                .isEqualTo("/customers/manage?tab=consultation&customerId=" + customerId);
+        assertThat(inquiry.getInquiryStatus()).isEqualTo(InquiryStatus.CONVERTED);
+        assertThat(inquiry.getConvertedCustomer()).isSameAs(customer);
+        assertThat(inquiry.getConvertedConsultation()).isSameAs(consultation);
+        assertThat(inquiry.getConvertedAt()).isNotNull();
+
+        ArgumentCaptor<CustomerActivityTimeline> captor =
+                ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(captor.capture());
+        CustomerActivityTimeline timeline = captor.getValue();
+        assertThat(timeline.getStore()).isSameAs(store);
+        assertThat(timeline.getCustomer()).isSameAs(customer);
+        assertThat(timeline.getActorUser()).isSameAs(counselor);
+        assertThat(timeline.getActivityType())
+                .isEqualTo(CustomerActivityType.INQUIRY_CONVERTED_TO_CONSULTATION);
+        assertThat(timeline.getTitle()).isEqualTo("문의가 상담으로 전환되었습니다.");
+        assertThat(timeline.getDescription()).contains("신규 고객과 첫 상담");
+        assertThat(timeline.getRelatedType()).isEqualTo(ActivityRelatedType.INQUIRY);
+        assertThat(timeline.getRelatedId()).isEqualTo(inquiryId);
+        assertThat(timeline.getOccurredAt()).isEqualTo(inquiry.getConvertedAt());
+        assertThat(timeline.getAfterValue())
+                .containsEntry("newCustomerCreated", true)
+                .containsEntry("customerId", customerId)
+                .containsEntry("consultationId", consultationId)
+                .containsEntry("sessionNo", 1);
+        verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
+    }
+
+    @Test
+    @DisplayName("기존 고객 전환 타임라인에는 신규 고객을 생성하지 않았음을 기록한다")
+    void convertInquirySavesExistingCustomerTimeline() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .user(User.builder().id(UUID.randomUUID()).store(store).build())
+                .inquiryStatus(InquiryStatus.VISIT_SCHEDULED)
+                .build();
+        Customer customer = Customer.builder().id(UUID.randomUUID()).store(store).build();
+        Consultation consultation = Consultation.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .sessionNo(3)
+                .build();
+        InquiryConversionContext context = InquiryConversionContext.existingCustomer(customer, consultation);
+        InquiryService service = spy(inquiryService);
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doReturn(context).when(service).resolveCustomerConversion(inquiry);
+
+        service.convertInquiry(storeId, inquiryId);
+
+        ArgumentCaptor<CustomerActivityTimeline> captor =
+                ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(captor.capture());
+        assertThat(captor.getValue().getDescription()).contains("기존 고객");
+        assertThat(captor.getValue().getAfterValue())
+                .containsEntry("newCustomerCreated", false)
+                .containsEntry("sessionNo", 3);
+    }
+
+    @Test
+    @DisplayName("신규 고객 연락처 unique 제약 충돌은 CUSTOMER_DUPLICATE_CONFLICT로 변환한다")
+    void convertInquiryMapsCustomerPhoneConstraintConflict() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        InquiryService service = spy(inquiryService);
+        DataIntegrityViolationException conflict = new DataIntegrityViolationException(
+                "customer insert failed",
+                new SQLException("duplicate key violates constraint uk_customer_store_phone")
+        );
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doThrow(conflict).when(service).resolveCustomerConversion(inquiry);
+
+        assertThatThrownBy(() -> service.convertInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.CUSTOMER_DUPLICATE_CONFLICT);
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("그 외 상담 전환 저장 제약 충돌은 CONSULTATION_CREATE_FAILED로 변환한다")
+    void convertInquiryMapsConsultationConstraintConflict() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        InquiryService service = spy(inquiryService);
+        DataIntegrityViolationException conflict = new DataIntegrityViolationException(
+                "consultation insert failed",
+                new SQLException("duplicate key violates constraint uk_consultation_customer_session")
+        );
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doThrow(conflict).when(service).resolveCustomerConversion(inquiry);
+
+        assertThatThrownBy(() -> service.convertInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.CONSULTATION_CREATE_FAILED);
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("상담 전환 DB 저장 실패는 CONSULTATION_CREATE_FAILED로 변환한다")
+    void convertInquiryMapsDataAccessFailure() {
+        UUID storeId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        Inquiry inquiry = Inquiry.builder()
+                .id(inquiryId)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
+        InquiryService service = spy(inquiryService);
+
+        doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
+        doThrow(new DataAccessResourceFailureException("database unavailable"))
+                .when(service).resolveCustomerConversion(inquiry);
+
+        assertThatThrownBy(() -> service.convertInquiry(storeId, inquiryId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(InquiryErrorCode.CONSULTATION_CREATE_FAILED);
+
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -753,5 +1400,20 @@ class InquiryServiceTest {
         ReflectionTestUtils.setField(request, "inquiry", inquiry);
 
         return request;
+    }
+
+    private Inquiry conversionInquiry(
+            UUID inquiryId,
+            UUID serviceId,
+            UUID inflowPathId,
+            UUID counselorId
+    ) {
+        return Inquiry.builder()
+                .id(inquiryId)
+                .service(Service.builder().id(serviceId).active(true).build())
+                .inflowPathOption(InflowPathOption.builder().id(inflowPathId).active(true).build())
+                .user(User.builder().id(counselorId).build())
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .build();
     }
 }
