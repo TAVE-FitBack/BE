@@ -1,5 +1,23 @@
 services:
 
+  app:
+    image: 7iniyo/fitback:latest
+    container_name: fitback-app
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://fitback-postgres:5432/${DB_NAME}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: fitback-redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+    depends_on:
+      - postgres
+      - redis
+
   postgres:
     image: postgres:16
     container_name: fitback-postgres
@@ -16,7 +34,7 @@ services:
     image: redis:7
     container_name: fitback-redis
     ports:
-      - "${REDIS_PORT}:6379"
+      - "${REDIS_PORT:-6379}:6379"
 
 volumes:
   postgres-data:
