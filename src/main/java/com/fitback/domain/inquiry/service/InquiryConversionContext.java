@@ -9,8 +9,8 @@ record InquiryConversionContext(
         boolean customerCreated
 ) {
 
-    static InquiryConversionContext existingCustomer(Customer customer) {
-        return new InquiryConversionContext(customer, null, false);
+    static InquiryConversionContext existingCustomer(Customer customer, Consultation consultation) {
+        return new InquiryConversionContext(customer, consultation, false);
     }
 
     static InquiryConversionContext newCustomer(Customer customer, Consultation consultation) {

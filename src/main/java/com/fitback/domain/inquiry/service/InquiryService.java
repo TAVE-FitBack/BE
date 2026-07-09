@@ -173,13 +173,13 @@ public class InquiryService {
         return inquiry;
     }
 
-    InquiryConversionContext resolveNewCustomerConversion(Inquiry inquiry) {
-        Optional<Customer> existingCustomer = customerRepository.findByPhoneNumAndStoreId(
+    InquiryConversionContext resolveCustomerConversion(Inquiry inquiry) {
+        Optional<Customer> existingCustomer = customerRepository.findByPhoneNumAndStoreIdForUpdate(
                 inquiry.getPhoneNum(),
                 inquiry.getStore().getId()
         );
         if (existingCustomer.isPresent()) {
-            return InquiryConversionContext.existingCustomer(existingCustomer.get());
+            return createExistingCustomerConsultation(existingCustomer.get(), inquiry);
         }
 
         Customer customer = customerRepository.save(Customer.builder()
@@ -215,6 +215,42 @@ public class InquiryService {
                 .build());
 
         return InquiryConversionContext.newCustomer(customer, consultation);
+    }
+
+    private InquiryConversionContext createExistingCustomerConsultation(
+            Customer customer,
+            Inquiry inquiry
+    ) {
+        int nextSessionNo = consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customer.getId())
+                .map(Consultation::getSessionNo)
+                .orElse(0) + 1;
+
+        Consultation consultation = consultationRepository.save(Consultation.builder()
+                .customer(customer)
+                .user(inquiry.getUser())
+                .consultedService(inquiry.getService())
+                .consultedAt(inquiry.getInquiredAt())
+                .sessionNo(nextSessionNo)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.INQUIRY)
+                .rawText(inquiry.getRawText())
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build());
+
+        customer.updateLatestConsultAt(inquiry.getInquiredAt().toLocalDate());
+
+        boolean interestServiceExists = interestServiceRepository.existsByCustomerIdAndServiceId(
+                customer.getId(),
+                inquiry.getService().getId()
+        );
+        if (!interestServiceExists) {
+            interestServiceRepository.save(InterestService.builder()
+                    .customer(customer)
+                    .service(inquiry.getService())
+                    .build());
+        }
+
+        return InquiryConversionContext.existingCustomer(customer, consultation);
     }
 
     @Transactional

@@ -509,7 +509,7 @@ class InquiryServiceTest {
 
     @Test
     @DisplayName("동일 매장과 연락처의 고객이 없으면 문의 정보로 PENDING 고객과 관심 서비스, 첫 상담을 생성한다")
-    void resolveNewCustomerConversionCreatesCustomerAndFirstConsultation() {
+    void resolveCustomerConversionCreatesCustomerAndFirstConsultation() {
         UUID storeId = UUID.randomUUID();
         UUID inquiryId = UUID.randomUUID();
         UUID customerId = UUID.randomUUID();
@@ -538,7 +538,7 @@ class InquiryServiceTest {
                 .rawText("방문 상담 문의 원문")
                 .build();
 
-        when(customerRepository.findByPhoneNumAndStoreId(inquiry.getPhoneNum(), storeId))
+        when(customerRepository.findByPhoneNumAndStoreIdForUpdate(inquiry.getPhoneNum(), storeId))
                 .thenReturn(Optional.empty());
         when(customerRepository.save(any(Customer.class)))
                 .thenAnswer(invocation -> {
@@ -553,7 +553,7 @@ class InquiryServiceTest {
                     return consultation;
                 });
 
-        InquiryConversionContext result = inquiryService.resolveNewCustomerConversion(inquiry);
+        InquiryConversionContext result = inquiryService.resolveCustomerConversion(inquiry);
 
         assertThat(result.customerCreated()).isTrue();
         assertThat(result.customer().getId()).isEqualTo(customerId);
@@ -595,26 +595,109 @@ class InquiryServiceTest {
     }
 
     @Test
-    @DisplayName("동일 매장과 연락처의 기존 고객이 있으면 신규 고객, 관심 서비스, 첫 상담을 생성하지 않는다")
-    void resolveNewCustomerConversionReturnsExistingCustomer() {
+    @DisplayName("동일 매장과 연락처의 기존 고객이 있으면 정보를 유지하고 다음 회차 상담을 생성한다")
+    void resolveCustomerConversionCreatesConsultationForExistingCustomer() {
         UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        OffsetDateTime inquiredAt = OffsetDateTime.parse("2026-07-02T10:00:00+09:00");
         Store store = Store.builder().id(storeId).build();
-        Customer existingCustomer = Customer.builder().id(UUID.randomUUID()).store(store).build();
+        Service service = Service.builder().id(serviceId).store(store).build();
+        User counselor = User.builder().id(UUID.randomUUID()).store(store).build();
+        Customer existingCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .name("기존 이름")
+                .phoneNum("010-1234-5678")
+                .status(CustomerStatus.PENDING)
+                .firstConsultAt(LocalDate.of(2026, 6, 1))
+                .latestConsultAt(LocalDate.of(2026, 6, 15))
+                .build();
         Inquiry inquiry = Inquiry.builder()
                 .store(store)
+                .service(service)
+                .user(counselor)
+                .name("문의 이름")
                 .phoneNum("010-1234-5678")
+                .inquiredAt(inquiredAt)
+                .rawText("기존 고객 문의 원문")
+                .build();
+        Consultation previousConsultation = Consultation.builder()
+                .customer(existingCustomer)
+                .sessionNo(2)
                 .build();
 
-        when(customerRepository.findByPhoneNumAndStoreId(inquiry.getPhoneNum(), storeId))
+        when(customerRepository.findByPhoneNumAndStoreIdForUpdate(inquiry.getPhoneNum(), storeId))
                 .thenReturn(Optional.of(existingCustomer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(previousConsultation));
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interestServiceRepository.existsByCustomerIdAndServiceId(customerId, serviceId))
+                .thenReturn(true);
 
-        InquiryConversionContext result = inquiryService.resolveNewCustomerConversion(inquiry);
+        InquiryConversionContext result = inquiryService.resolveCustomerConversion(inquiry);
 
         assertThat(result.customerCreated()).isFalse();
         assertThat(result.customer()).isSameAs(existingCustomer);
-        assertThat(result.consultation()).isNull();
+        assertThat(result.customer().getName()).isEqualTo("기존 이름");
+        assertThat(result.customer().getFirstConsultAt()).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(result.customer().getLatestConsultAt()).isEqualTo(inquiredAt.toLocalDate());
+
+        Consultation consultation = result.consultation();
+        assertThat(consultation.getCustomer()).isSameAs(existingCustomer);
+        assertThat(consultation.getUser()).isSameAs(counselor);
+        assertThat(consultation.getConsultedService()).isSameAs(service);
+        assertThat(consultation.getConsultedAt()).isEqualTo(inquiredAt);
+        assertThat(consultation.getSessionNo()).isEqualTo(3);
+        assertThat(consultation.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
+        assertThat(consultation.getSourceType()).isEqualTo(ConsultationSourceType.INQUIRY);
+        assertThat(consultation.getRawText()).isEqualTo(inquiry.getRawText());
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
+
         verify(customerRepository, never()).save(any(Customer.class));
-        verifyNoInteractions(interestServiceRepository, consultationRepository);
+        verify(interestServiceRepository).existsByCustomerIdAndServiceId(customerId, serviceId);
+        verify(interestServiceRepository, never()).save(any(InterestService.class));
+    }
+
+    @Test
+    @DisplayName("기존 고객에게 문의 서비스 관심 정보가 없으면 한 번만 추가한다")
+    void resolveCustomerConversionAddsMissingInterestService() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        Store store = Store.builder().id(storeId).build();
+        Service service = Service.builder().id(serviceId).store(store).build();
+        Customer existingCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .latestConsultAt(LocalDate.of(2026, 6, 1))
+                .build();
+        Inquiry inquiry = Inquiry.builder()
+                .store(store)
+                .service(service)
+                .user(User.builder().id(UUID.randomUUID()).store(store).build())
+                .phoneNum("010-1234-5678")
+                .inquiredAt(OffsetDateTime.parse("2026-07-02T10:00:00+09:00"))
+                .rawText("문의 원문")
+                .build();
+
+        when(customerRepository.findByPhoneNumAndStoreIdForUpdate(inquiry.getPhoneNum(), storeId))
+                .thenReturn(Optional.of(existingCustomer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.empty());
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interestServiceRepository.existsByCustomerIdAndServiceId(customerId, serviceId))
+                .thenReturn(false);
+
+        InquiryConversionContext result = inquiryService.resolveCustomerConversion(inquiry);
+
+        assertThat(result.consultation().getSessionNo()).isEqualTo(1);
+        ArgumentCaptor<InterestService> captor = ArgumentCaptor.forClass(InterestService.class);
+        verify(interestServiceRepository).save(captor.capture());
+        assertThat(captor.getValue().getCustomer()).isSameAs(existingCustomer);
+        assertThat(captor.getValue().getService()).isSameAs(service);
     }
 
     @Test
