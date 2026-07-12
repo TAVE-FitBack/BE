@@ -1,6 +1,7 @@
 package com.fitback.domain.schedule.service;
 
 import com.fitback.domain.schedule.dto.response.ScheduleListResponse;
+import com.fitback.domain.schedule.dto.response.ScheduleDetailResponse;
 import com.fitback.domain.schedule.dto.response.ScheduleResponse;
 import com.fitback.domain.schedule.entity.Schedule;
 import com.fitback.domain.schedule.exception.ScheduleErrorCode;
@@ -45,6 +46,14 @@ public class ScheduleService {
                 .build();
     }
 
+    public ScheduleDetailResponse getScheduleDetail(UUID storeId, UUID scheduleId) {
+        validateStoreId(storeId);
+        Schedule schedule = scheduleRepository.findByIdAndStore_Id(scheduleId, storeId)
+                .orElseThrow(() -> new BusinessException(ScheduleErrorCode.SCHEDULE_NOT_FOUND));
+
+        return toScheduleDetailResponse(schedule);
+    }
+
     private void validateStoreId(UUID storeId) {
         if (storeId == null) {
             throw new BusinessException(ScheduleErrorCode.STORE_NOT_ASSIGNED);
@@ -71,6 +80,23 @@ public class ScheduleService {
                 .startAt(schedule.getStartAt())
                 .endAt(schedule.getEndAt())
                 .memo(schedule.getMemo())
+                .build();
+    }
+
+    private ScheduleDetailResponse toScheduleDetailResponse(Schedule schedule) {
+        return ScheduleDetailResponse.builder()
+                .scheduleId(schedule.getId())
+                .scheduleType(schedule.getScheduleType())
+                .title(schedule.getTitle())
+                .customerName(schedule.getCustomerName())
+                .gender(schedule.getGender())
+                .serviceName(schedule.getServiceName())
+                .startAt(schedule.getStartAt())
+                .endAt(schedule.getEndAt())
+                .memo(schedule.getMemo())
+                .createdBy(schedule.getCreatedBy().getNickname())
+                .createdAt(schedule.getCreatedAt())
+                .updatedAt(schedule.getUpdatedAt())
                 .build();
     }
 }
