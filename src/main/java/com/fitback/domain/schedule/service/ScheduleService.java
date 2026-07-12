@@ -109,6 +109,15 @@ public class ScheduleService {
         return toScheduleResponse(schedule);
     }
 
+    @Transactional
+    public void deleteSchedule(UUID storeId, UUID scheduleId) {
+        validateStoreId(storeId);
+        Schedule schedule = scheduleRepository.findByIdAndStore_Id(scheduleId, storeId)
+                .orElseThrow(() -> new BusinessException(ScheduleErrorCode.SCHEDULE_NOT_FOUND));
+
+        scheduleRepository.delete(schedule);
+    }
+
     private void validateStoreId(UUID storeId) {
         if (storeId == null) {
             throw new BusinessException(ScheduleErrorCode.STORE_NOT_ASSIGNED);

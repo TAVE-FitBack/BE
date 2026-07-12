@@ -17,6 +17,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -111,5 +112,23 @@ public class ScheduleController {
     ) {
         ScheduleResponse response = scheduleService.updateSchedule(storeId, scheduleId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @DeleteMapping("/{scheduleId}")
+    @Operation(summary = "스케줄러 일정 삭제", description = "사용자가 직접 등록한 일정을 삭제합니다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "204", description = "삭제 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "일정 없음")
+    })
+    public ResponseEntity<Void> deleteSchedule(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Parameter(description = "삭제할 일정 ID")
+            @PathVariable UUID scheduleId
+    ) {
+        scheduleService.deleteSchedule(storeId, scheduleId);
+        return ResponseEntity.noContent().build();
     }
 }
