@@ -49,11 +49,14 @@ class ScheduleServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private TaskChecklistService taskChecklistService;
+
     private ScheduleService scheduleService;
 
     @BeforeEach
     void setUp() {
-        scheduleService = new ScheduleService(scheduleRepository, userRepository);
+        scheduleService = new ScheduleService(scheduleRepository, userRepository, taskChecklistService);
     }
 
     @Test
