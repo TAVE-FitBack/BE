@@ -176,6 +176,7 @@ class ScheduleServiceTest {
         assertThat(saved.getCustomer()).isNull();
         assertThat(saved.getConsultation()).isNull();
         assertThat(saved.getTitle()).isEqualTo("김민지 상담");
+        verify(taskChecklistService).createForScheduleIfConsultation(saved);
     }
 
     @Test
@@ -219,6 +220,7 @@ class ScheduleServiceTest {
         assertThat(response.getServiceName()).isEqualTo("필라테스");
         assertThat(schedule.getTitle()).isEqualTo("방문");
         verify(scheduleRepository).findByIdAndStore_Id(scheduleId, storeId);
+        verify(taskChecklistService).syncForUpdatedSchedule(schedule);
     }
 
     @Test
@@ -235,6 +237,7 @@ class ScheduleServiceTest {
 
         verify(scheduleRepository).findByIdAndStore_Id(scheduleId, storeId);
         verify(scheduleRepository).delete(schedule);
+        verify(taskChecklistService, never()).deleteBySchedule(any(Schedule.class));
     }
 
     @Test
