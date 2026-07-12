@@ -1,19 +1,25 @@
 package com.fitback.domain.schedule.controller;
 
+import com.fitback.domain.schedule.dto.request.ScheduleCreateRequest;
 import com.fitback.domain.schedule.dto.response.ScheduleDetailResponse;
 import com.fitback.domain.schedule.dto.response.ScheduleListResponse;
+import com.fitback.domain.schedule.dto.response.ScheduleResponse;
 import com.fitback.domain.schedule.service.ScheduleService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -64,5 +70,25 @@ public class ScheduleController {
     ) {
         ScheduleDetailResponse response = scheduleService.getScheduleDetail(storeId, scheduleId);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PostMapping
+    @Operation(summary = "스케줄러 일정 등록", description = "사용자가 직접 입력한 상담/방문/기타 일정을 등록합니다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "등록 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당 또는 잘못된 요청값"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "사용자 없음")
+    })
+    public ResponseEntity<ApiResponse<ScheduleResponse>> createSchedule(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Valid @RequestBody ScheduleCreateRequest request
+    ) {
+        ScheduleResponse response = scheduleService.createSchedule(storeId, userId, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(response));
     }
 }
