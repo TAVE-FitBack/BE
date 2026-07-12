@@ -33,6 +33,7 @@ public class ScheduleService {
 
     private final ScheduleRepository scheduleRepository;
     private final UserRepository userRepository;
+    private final TaskChecklistService taskChecklistService;
 
     public ScheduleListResponse getSchedules(UUID storeId, LocalDate startDate, LocalDate endDate) {
         validateStoreId(storeId);
@@ -83,7 +84,10 @@ public class ScheduleService {
                 .memo(normalizeBlankToNull(request.getMemo()))
                 .build();
 
-        return toScheduleResponse(scheduleRepository.save(schedule));
+        Schedule savedSchedule = scheduleRepository.save(schedule);
+        taskChecklistService.createForScheduleIfConsultation(savedSchedule);
+
+        return toScheduleResponse(savedSchedule);
     }
 
     @Transactional
@@ -105,6 +109,8 @@ public class ScheduleService {
                 request.getEndAt(),
                 normalizeBlankToNull(request.getMemo())
         );
+
+        taskChecklistService.syncForUpdatedSchedule(schedule);
 
         return toScheduleResponse(schedule);
     }
