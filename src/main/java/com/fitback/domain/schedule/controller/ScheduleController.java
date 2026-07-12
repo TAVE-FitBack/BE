@@ -1,6 +1,7 @@
 package com.fitback.domain.schedule.controller;
 
 import com.fitback.domain.schedule.dto.request.ScheduleCreateRequest;
+import com.fitback.domain.schedule.dto.request.ScheduleUpdateRequest;
 import com.fitback.domain.schedule.dto.response.ScheduleDetailResponse;
 import com.fitback.domain.schedule.dto.response.ScheduleListResponse;
 import com.fitback.domain.schedule.dto.response.ScheduleResponse;
@@ -18,6 +19,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -90,5 +92,24 @@ public class ScheduleController {
         ScheduleResponse response = scheduleService.createSchedule(storeId, userId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.onSuccess(response));
+    }
+
+    @PatchMapping("/{scheduleId}")
+    @Operation(summary = "스케줄러 일정 수정", description = "사용자가 직접 등록한 일정을 수정합니다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "수정 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당 또는 잘못된 요청값"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "일정 없음")
+    })
+    public ResponseEntity<ApiResponse<ScheduleResponse>> updateSchedule(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Parameter(description = "수정할 일정 ID")
+            @PathVariable UUID scheduleId,
+            @Valid @RequestBody ScheduleUpdateRequest request
+    ) {
+        ScheduleResponse response = scheduleService.updateSchedule(storeId, scheduleId, request);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }

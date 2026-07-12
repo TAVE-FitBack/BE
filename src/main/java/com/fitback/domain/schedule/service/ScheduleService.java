@@ -2,6 +2,7 @@ package com.fitback.domain.schedule.service;
 
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.schedule.dto.request.ScheduleCreateRequest;
+import com.fitback.domain.schedule.dto.request.ScheduleUpdateRequest;
 import com.fitback.domain.schedule.dto.response.ScheduleListResponse;
 import com.fitback.domain.schedule.dto.response.ScheduleDetailResponse;
 import com.fitback.domain.schedule.dto.response.ScheduleResponse;
@@ -83,6 +84,29 @@ public class ScheduleService {
                 .build();
 
         return toScheduleResponse(scheduleRepository.save(schedule));
+    }
+
+    @Transactional
+    public ScheduleResponse updateSchedule(UUID storeId, UUID scheduleId, ScheduleUpdateRequest request) {
+        validateStoreId(storeId);
+        Schedule schedule = scheduleRepository.findByIdAndStore_Id(scheduleId, storeId)
+                .orElseThrow(() -> new BusinessException(ScheduleErrorCode.SCHEDULE_NOT_FOUND));
+        ScheduleType scheduleType = parseScheduleType(request.getScheduleType());
+        Gender gender = parseGender(request.getGender());
+        validateScheduleRequest(scheduleType, request.getCustomerName(), request.getStartAt(), request.getEndAt());
+
+        schedule.update(
+                generateTitle(scheduleType, request.getCustomerName()),
+                scheduleType,
+                normalizeBlankToNull(request.getCustomerName()),
+                gender,
+                normalizeBlankToNull(request.getServiceName()),
+                request.getStartAt(),
+                request.getEndAt(),
+                normalizeBlankToNull(request.getMemo())
+        );
+
+        return toScheduleResponse(schedule);
     }
 
     private void validateStoreId(UUID storeId) {
