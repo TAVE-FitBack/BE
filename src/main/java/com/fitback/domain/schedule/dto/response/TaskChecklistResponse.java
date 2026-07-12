@@ -1,5 +1,6 @@
 package com.fitback.domain.schedule.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fitback.domain.schedule.enums.TaskType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -19,6 +20,9 @@ public class TaskChecklistResponse {
     private String title;
     private TaskType taskType;
     private LocalDate dueDate;
+
+    @JsonProperty("isDone")
     private boolean isDone;
+
     private OffsetDateTime doneAt;
 }
