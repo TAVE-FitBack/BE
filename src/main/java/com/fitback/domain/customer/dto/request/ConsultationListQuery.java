@@ -43,6 +43,12 @@ public class ConsultationListQuery {
     @Schema(description = "고객온도", allowableValues = {"HOT", "WARM", "HOLD", "COLD", "LOST"})
     private String leadTemperature;
 
+    @Schema(
+            description = "í›„ì†ê´€ë¦¬ ê´€ë¦¬ë‹¨ê³„",
+            allowableValues = {"ROUND_1", "ROUND_2", "ROUND_3", "COMPLETED", "CLOSED", "NONE"}
+    )
+    private String managementStage;
+
     @Schema(description = "담당자 ID")
     private UUID counselorId;
 

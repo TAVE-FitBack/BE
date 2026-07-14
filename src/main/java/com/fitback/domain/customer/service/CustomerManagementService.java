@@ -48,6 +48,8 @@ public class CustomerManagementService {
     private static final int INQUIRY_MEMO_MAX_LENGTH = 100;
     private static final Set<String> LEAD_TEMPERATURES =
             Set.of("HOT", "WARM", "HOLD", "COLD", "LOST");
+    private static final Set<String> MANAGEMENT_STAGES =
+            Set.of("ROUND_1", "ROUND_2", "ROUND_3", "COMPLETED", "CLOSED", "NONE");
     private static final Map<String, String> REASON_DISPLAY_NAMES = Map.of(
             "PRICE_BURDEN", "이용료 부담",
             "SCHEDULE_CONFLICT", "일정 문제"
@@ -175,6 +177,7 @@ public class CustomerManagementService {
         if (leadTemperature != null && !LEAD_TEMPERATURES.contains(leadTemperature)) {
             throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
         }
+        String managementStage = validateManagementStage(query.getManagementStage());
         String reasonType = normalizeUppercase(query.getReasonType());
         if (reasonType != null && !reasonType.matches("[A-Z][A-Z0-9_]{0,49}")) {
             throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
@@ -190,6 +193,7 @@ public class CustomerManagementService {
                 reasonType,
                 status,
                 leadTemperature,
+                managementStage,
                 query.getCounselorId()
         );
     }
@@ -266,6 +270,17 @@ public class CustomerManagementService {
             return null;
         }
         return value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String validateManagementStage(String value) {
+        String normalized = normalizeUppercase(value);
+        if (normalized == null) {
+            return null;
+        }
+        if (!MANAGEMENT_STAGES.contains(normalized)) {
+            throw new BusinessException(CustomerManagementErrorCode.INVALID_MANAGEMENT_STAGE);
+        }
+        return normalized;
     }
 
     private Map<UUID, List<CustomerManagementConsultationListResponse.NonConversionReasonInfo>>

@@ -469,6 +469,7 @@ public class CustomerManagementQueryRepository {
             String reasonType,
             String status,
             String leadTemperature,
+            String managementStage,
             UUID counselorId
     ) {
     }

@@ -25,6 +25,10 @@ public enum CustomerManagementErrorCode implements BaseErrorCode {
             HttpStatus.BAD_REQUEST,
             "필터 조건이 올바르지 않습니다."
     ),
+    INVALID_MANAGEMENT_STAGE(
+            HttpStatus.BAD_REQUEST,
+            "ì§€ì›í•˜ì§€ ì•ŠëŠ” ê´€ë¦¬ë‹¨ê³„ í•„í„°ìž…ë‹ˆë‹¤."
+    ),
     INVALID_PAGE_REQUEST(
             HttpStatus.BAD_REQUEST,
             "페이지 요청이 올바르지 않습니다."
