@@ -9,5 +9,11 @@ import java.util.UUID;
 
 public interface FollowUpRepository extends JpaRepository<FollowUp, UUID> {
 
+    Optional<FollowUp> findByIdAndCustomer_Store_Id(UUID id, UUID storeId);
+
+    Optional<FollowUp> findFirstByCustomerIdOrderByCreatedAtDescIdDesc(UUID customerId);
+
+    Optional<FollowUp> findFirstByCustomerIdAndStatusOrderByCreatedAtDescIdDesc(UUID customerId, FollowUpStatus status);
+
     Optional<FollowUp> findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(UUID customerId, FollowUpStatus status);
 }

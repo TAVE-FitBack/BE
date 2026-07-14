@@ -61,6 +61,9 @@ public class MessageTemplate {
     @Column(name = "delivery_status", length = 20)
     private String deliveryStatus;
 
+    @Column(name = "contact_round")
+    private Integer contactRound;
+
     @Column(name = "scheduled_at")
     private OffsetDateTime scheduledAt;
 
@@ -80,5 +83,12 @@ public class MessageTemplate {
         this.deliveryStatus = MessageDeliveryStatus.SENT.name();
         this.sentAt = sentAt;
         this.updatedAt = sentAt;
+    }
+
+    public void assignContactRound(Integer contactRound) {
+        if (contactRound != null) {
+            FollowUp.validateContactRound(contactRound);
+        }
+        this.contactRound = contactRound;
     }
 }

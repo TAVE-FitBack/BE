@@ -29,9 +29,21 @@ public enum CustomerErrorCode implements BaseErrorCode {
             HttpStatus.BAD_REQUEST,
             "진행 중인 후속 연락을 찾을 수 없습니다."
     ),
+    FOLLOW_UP_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "후속 연락 정보를 찾을 수 없습니다."
+    ),
     FOLLOW_UP_NOT_PENDING(
             HttpStatus.BAD_REQUEST,
             "후속 연락이 대기 상태가 아닙니다."
+    ),
+    FOLLOW_UP_ROUND_LIMIT_EXCEEDED(
+            HttpStatus.CONFLICT,
+            "이미 3차까지 후속관리가 완료되어 다음 차수를 생성할 수 없습니다."
+    ),
+    ACTIVE_FOLLOW_UP_ALREADY_EXISTS(
+            HttpStatus.CONFLICT,
+            "현재 진행 중인 후속관리가 있어 새 후속관리를 생성할 수 없습니다."
     ),
     NEXT_ACTION_NOT_FOUND(
             HttpStatus.BAD_REQUEST,

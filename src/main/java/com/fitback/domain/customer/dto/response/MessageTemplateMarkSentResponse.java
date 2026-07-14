@@ -19,4 +19,5 @@ public class MessageTemplateMarkSentResponse {
     private OffsetDateTime sentAt;
     private UUID followUpId;
     private FollowUpStatus followUpStatus;
+    private int contactRound;
 }
