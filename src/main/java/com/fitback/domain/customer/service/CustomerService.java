@@ -15,6 +15,7 @@ import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
+import com.fitback.domain.customer.dto.request.FollowUpReplyUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateMarkSentRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
@@ -24,6 +25,7 @@ import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.FollowUpReplyUpdateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
@@ -164,6 +166,32 @@ public class CustomerService {
                 .tonePresets(toTonePresetOptions())
                 .versionTypes(toVersionTypeOptions())
                 .events(toEventOptions(eventQueryRepository.findActiveEventsByStoreId(storeId)))
+                .build();
+    }
+
+    @Transactional
+    public FollowUpReplyUpdateResponse updateFollowUpReply(
+            UUID storeId,
+            UUID followUpId,
+            FollowUpReplyUpdateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        FollowUp followUp = followUpRepository.findByIdAndCustomer_Store_Id(followUpId, storeId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_FOUND));
+
+        boolean hasReply = Boolean.TRUE.equals(request.getHasReply());
+        OffsetDateTime repliedAt = hasReply
+                ? OffsetDateTime.now()
+                : null;
+        followUp.updateReply(hasReply, repliedAt);
+
+        return FollowUpReplyUpdateResponse.builder()
+                .followUpId(followUp.getId())
+                .hasReply(followUp.isHasReply())
+                .repliedAt(followUp.getRepliedAt())
                 .build();
     }
 
