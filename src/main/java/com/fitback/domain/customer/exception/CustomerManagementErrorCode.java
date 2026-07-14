@@ -11,27 +11,27 @@ public enum CustomerManagementErrorCode implements BaseErrorCode {
 
     STORE_NOT_ASSIGNED(
             HttpStatus.BAD_REQUEST,
-            "사용자에게 연결된 매장이 없습니다."
+            "Store is not assigned to the current user."
     ),
     INVALID_MONTH_FORMAT(
             HttpStatus.BAD_REQUEST,
-            "조회 월은 YYYY-MM 형식이어야 합니다."
+            "Month must be in YYYY-MM format."
     ),
     INVALID_SEARCH_CONDITION(
             HttpStatus.BAD_REQUEST,
-            "검색 조건이 올바르지 않습니다."
+            "Search condition is invalid."
     ),
     INVALID_FILTER_CONDITION(
             HttpStatus.BAD_REQUEST,
-            "필터 조건이 올바르지 않습니다."
+            "Filter condition is invalid."
     ),
     INVALID_MANAGEMENT_STAGE(
             HttpStatus.BAD_REQUEST,
-            "ì§€ì›í•˜ì§€ ì•ŠëŠ” ê´€ë¦¬ë‹¨ê³„ í•„í„°ìž…ë‹ˆë‹¤."
+            "Unsupported management stage filter."
     ),
     INVALID_PAGE_REQUEST(
             HttpStatus.BAD_REQUEST,
-            "페이지 요청이 올바르지 않습니다."
+            "Page request is invalid."
     );
 
     private final HttpStatus httpStatus;
