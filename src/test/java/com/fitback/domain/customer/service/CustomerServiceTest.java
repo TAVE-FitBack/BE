@@ -880,6 +880,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .build();
         MessageTemplate messageTemplate = messageTemplate(
                 messageTemplateId,
@@ -889,7 +890,8 @@ class CustomerServiceTest {
         );
         MessageTemplateMarkSentRequest request = messageTemplateMarkSentRequest(sentAt);
 
-        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.of(messageTemplate));
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
         when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
 
         MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
@@ -904,9 +906,11 @@ class CustomerServiceTest {
         assertThat(response.getSentAt()).isEqualTo(sentAt);
         assertThat(response.getFollowUpId()).isEqualTo(followUp.getId());
         assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(response.getContactRound()).isEqualTo(2);
         assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
         assertThat(messageTemplate.getSentAt()).isEqualTo(sentAt);
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
 
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.MESSAGE_SENT
@@ -928,13 +932,107 @@ class CustomerServiceTest {
     }
 
     @Test
+    @DisplayName("등록 완료 고객 메시지 전송 완료는 연결된 follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    void markMessageTemplateSentRegisteredCustomerClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        OffsetDateTime sentAt = OffsetDateTime.parse("2026-07-08T15:20:00+09:00");
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        customer.markRegistered(service, OffsetDateTime.parse("2026-07-08T10:00:00+09:00"));
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(3)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(sentAt)
+        );
+
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(response.getContactRound()).isEqualTo(3);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(3);
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
+        verify(customerActivityTimelineRepository).save(any(CustomerActivityTimeline.class));
+        verifyNoInteractions(aiConsultationClient, aiMessageClient, followUpRepository);
+    }
+
+    @Test
+    @DisplayName("이탈 고객 메시지 전송 완료는 연결된 follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    void markMessageTemplateSentLostCustomerClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        customer.markStatus(CustomerStatus.LOST);
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(2)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        );
+
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(response.getContactRound()).isEqualTo(2);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
+        verifyNoInteractions(aiConsultationClient, aiMessageClient, followUpRepository);
+    }
+
+    @Test
     @DisplayName("메시지 전송 완료 시 메시지 초안이 없으면 MESSAGE_TEMPLATE_NOT_FOUND 예외가 발생한다")
     void markMessageTemplateSentMessageNotFound() {
         UUID storeId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         UUID messageTemplateId = UUID.randomUUID();
 
-        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.empty());
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> customerService.markMessageTemplateSent(
                 storeId,
@@ -947,6 +1045,64 @@ class CustomerServiceTest {
                 .isEqualTo(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND);
 
         verifyNoInteractions(userRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("다른 매장 메시지 전송 완료 접근은 MESSAGE_TEMPLATE_NOT_FOUND 예외가 발생한다")
+    void markMessageTemplateSentOtherStoreMessageNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND);
+
+        verify(messageTemplateRepository).findByIdAndCustomer_Store_Id(messageTemplateId, storeId);
+        verifyNoInteractions(userRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("메시지 전송 완료 시 연결된 follow_up이 없으면 FOLLOW_UP_NOT_FOUND 예외가 발생한다")
+    void markMessageTemplateSentFollowUpNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        Store store = store(storeId);
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                null,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        assertThatThrownBy(() -> customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_NOT_FOUND);
+
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("DRAFT");
+        verify(customerActivityTimelineRepository, never()).save(any(CustomerActivityTimeline.class));
     }
 
     @Test
@@ -974,7 +1130,8 @@ class CustomerServiceTest {
                 OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
         );
 
-        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.of(messageTemplate));
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
         when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
 
         assertThatThrownBy(() -> customerService.markMessageTemplateSent(

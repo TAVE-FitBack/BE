@@ -294,20 +294,17 @@ public class CustomerService {
             throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
         }
 
-        MessageTemplate messageTemplate = messageTemplateRepository.findById(messageTemplateId)
+        MessageTemplate messageTemplate = messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId)
                 .orElseThrow(() -> new BusinessException(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND));
 
         Customer customer = messageTemplate.getCustomer();
-        if (!storeId.equals(customer.getStore().getId())) {
-            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
-        }
 
         User actorUser = userRepository.findByIdAndStore_Id(userId, storeId)
                 .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
 
         FollowUp followUp = messageTemplate.getFollowUp();
         if (followUp == null) {
-            throw new BusinessException(CustomerErrorCode.ACTIVE_FOLLOW_UP_NOT_FOUND);
+            throw new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_FOUND);
         }
 
         if (followUp.getStatus() != FollowUpStatus.PENDING) {
@@ -320,7 +317,11 @@ public class CustomerService {
         String beforeDeliveryStatus = messageTemplate.getDeliveryStatus();
 
         messageTemplate.markSent(sentAt);
-        followUp.markCompleted();
+        if (customer.getStatus() == CustomerStatus.REGISTERED || customer.getStatus() == CustomerStatus.LOST) {
+            followUp.markClosed();
+        } else {
+            followUp.markCompleted();
+        }
         saveMessageSentTimeline(customer, actorUser, messageTemplate, beforeDeliveryStatus);
 
         return MessageTemplateMarkSentResponse.builder()
@@ -329,6 +330,7 @@ public class CustomerService {
                 .sentAt(messageTemplate.getSentAt())
                 .followUpId(followUp.getId())
                 .followUpStatus(followUp.getStatus())
+                .contactRound(followUp.getContactRound())
                 .build();
     }
 
