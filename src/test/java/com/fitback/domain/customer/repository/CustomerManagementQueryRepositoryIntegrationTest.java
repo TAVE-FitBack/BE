@@ -186,7 +186,7 @@ class CustomerManagementQueryRepositoryIntegrationTest {
     @DisplayName("PostgreSQL에서 고객별 session_no가 가장 큰 상담 한 행만 조회한다")
     void findLatestConsultationPerCustomer() {
         ConsultationSearchCondition condition = new ConsultationSearchCondition(
-                null, null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, null, null, null
         );
 
         ConsultationPageRows result = queryRepository.findConsultations(
@@ -225,6 +225,7 @@ class CustomerManagementQueryRepositoryIntegrationTest {
                 "PRICE_BURDEN",
                 "PENDING",
                 "WARM",
+                null,
                 counselorId
         );
 
