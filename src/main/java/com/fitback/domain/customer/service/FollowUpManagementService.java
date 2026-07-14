@@ -1,9 +1,12 @@
 package com.fitback.domain.customer.service;
 
 import com.fitback.domain.customer.dto.request.FollowUpBoardQuery;
+import com.fitback.domain.customer.dto.request.FollowUpEndedQuery;
 import com.fitback.domain.customer.dto.response.FollowUpBoardColumnResponse;
 import com.fitback.domain.customer.dto.response.FollowUpBoardItemResponse;
 import com.fitback.domain.customer.dto.response.FollowUpBoardResponse;
+import com.fitback.domain.customer.dto.response.FollowUpEndedItemResponse;
+import com.fitback.domain.customer.dto.response.FollowUpEndedListResponse;
 import com.fitback.domain.customer.dto.response.FollowUpSummaryResponse;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
@@ -12,6 +15,9 @@ import com.fitback.domain.customer.exception.FollowUpManagementErrorCode;
 import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository;
 import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.BoardCondition;
 import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.BoardRow;
+import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.EndedCondition;
+import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.EndedPageRows;
+import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.EndedRow;
 import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.NonConversionReasonRow;
 import com.fitback.domain.customer.repository.FollowUpManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator;
@@ -42,6 +48,8 @@ public class FollowUpManagementService {
 
     private static final String TAB_TODAY = "TODAY";
     private static final String TAB_SCHEDULED = "SCHEDULED";
+    private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String STATUS_CLOSED = "CLOSED";
     private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter
             .ofPattern("uuuu-MM")
             .withResolverStyle(ResolverStyle.STRICT);
@@ -101,6 +109,37 @@ public class FollowUpManagementService {
                 .build();
     }
 
+    public FollowUpEndedListResponse getEndedFollowUps(UUID storeId, FollowUpEndedQuery query) {
+        validateStoreId(storeId);
+        EndedCondition condition = buildEndedCondition(query);
+
+        EndedPageRows pageRows = queryRepository.findEndedRows(
+                storeId,
+                condition,
+                query.getPage(),
+                query.getSize()
+        );
+        Map<UUID, List<FollowUpEndedItemResponse.NonConversionReasonInfo>> reasonsByCustomer =
+                findEndedReasonsByCustomer(pageRows.content());
+        List<FollowUpEndedItemResponse> items = pageRows.content().stream()
+                .map(row -> toEndedItem(
+                        row,
+                        reasonsByCustomer.getOrDefault(row.customerId(), List.of())
+                ))
+                .toList();
+        int totalPages = pageRows.totalElements() == 0
+                ? 0
+                : (int) Math.ceil((double) pageRows.totalElements() / query.getSize());
+
+        return FollowUpEndedListResponse.builder()
+                .items(items)
+                .page(query.getPage())
+                .size(query.getSize())
+                .totalElements(pageRows.totalElements())
+                .totalPages(totalPages)
+                .build();
+    }
+
     private void validateStoreId(UUID storeId) {
         if (storeId == null) {
             throw new BusinessException(FollowUpManagementErrorCode.STORE_NOT_ASSIGNED);
@@ -126,6 +165,45 @@ public class FollowUpManagementService {
                 contactRound,
                 query.getHasReply()
         );
+    }
+
+    private EndedCondition buildEndedCondition(FollowUpEndedQuery query) {
+        if (query == null) {
+            throw new BusinessException(FollowUpManagementErrorCode.INVALID_INPUT_VALUE);
+        }
+        validatePage(query.getPage(), query.getSize());
+
+        Integer contactRound = query.getContactRound();
+        if (contactRound != null && (contactRound < 1 || contactRound > 3)) {
+            throw new BusinessException(FollowUpManagementErrorCode.INVALID_INPUT_VALUE);
+        }
+
+        String followUpStatus = normalizeUppercase(query.getFollowUpStatus());
+        if (followUpStatus != null
+                && (!STATUS_COMPLETED.equals(followUpStatus) && !STATUS_CLOSED.equals(followUpStatus))) {
+            throw new BusinessException(FollowUpManagementErrorCode.INVALID_INPUT_VALUE);
+        }
+
+        LocalDate startDate = query.getStartDate();
+        LocalDate endDate = query.getEndDate();
+        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
+            throw new BusinessException(FollowUpManagementErrorCode.INVALID_DATE_RANGE);
+        }
+
+        return new EndedCondition(
+                normalizeKeyword(query.getKeyword()),
+                contactRound,
+                query.getHasReply(),
+                followUpStatus,
+                startDate,
+                endDate
+        );
+    }
+
+    private void validatePage(int page, int size) {
+        if (page < 0 || size < 1 || size > CustomerManagementQueryValidator.MAX_PAGE_SIZE) {
+            throw new BusinessException(FollowUpManagementErrorCode.INVALID_INPUT_VALUE);
+        }
     }
 
     private String normalizeKeyword(String keyword) {
@@ -165,10 +243,38 @@ public class FollowUpManagementService {
                 ));
     }
 
+    private Map<UUID, List<FollowUpEndedItemResponse.NonConversionReasonInfo>>
+    findEndedReasonsByCustomer(List<EndedRow> rows) {
+        if (rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<UUID> customerIds = rows.stream()
+                .map(EndedRow::customerId)
+                .collect(Collectors.toSet());
+
+        return queryRepository.findNonConversionReasons(customerIds).stream()
+                .collect(Collectors.groupingBy(
+                        NonConversionReasonRow::customerId,
+                        Collectors.mapping(
+                                this::toEndedReasonInfo,
+                                Collectors.toList()
+                        )
+                ));
+    }
+
     private FollowUpBoardItemResponse.NonConversionReasonInfo toBoardReasonInfo(
             NonConversionReasonRow row
     ) {
         return FollowUpBoardItemResponse.NonConversionReasonInfo.builder()
+                .reasonType(row.reasonType())
+                .displayName(REASON_DISPLAY_NAMES.getOrDefault(row.reasonType(), row.reasonType()))
+                .build();
+    }
+
+    private FollowUpEndedItemResponse.NonConversionReasonInfo toEndedReasonInfo(
+            NonConversionReasonRow row
+    ) {
+        return FollowUpEndedItemResponse.NonConversionReasonInfo.builder()
                 .reasonType(row.reasonType())
                 .displayName(REASON_DISPLAY_NAMES.getOrDefault(row.reasonType(), row.reasonType()))
                 .build();
@@ -212,6 +318,31 @@ public class FollowUpManagementService {
                 .latestMessageTemplateId(row.latestMessageTemplateId())
                 .latestMessageDeliveryStatus(row.latestMessageDeliveryStatus())
                 .latestMessageGeneratedAt(row.latestMessageGeneratedAt())
+                .build();
+    }
+
+    private FollowUpEndedItemResponse toEndedItem(
+            EndedRow row,
+            List<FollowUpEndedItemResponse.NonConversionReasonInfo> reasons
+    ) {
+        return FollowUpEndedItemResponse.builder()
+                .followUpId(row.followUpId())
+                .customerId(row.customerId())
+                .customerName(row.customerName())
+                .phoneNum(row.phoneNum())
+                .gender(Gender.valueOf(row.gender()))
+                .serviceName(row.serviceName())
+                .customerStatus(CustomerStatus.valueOf(row.customerStatus()))
+                .followUpStatus(FollowUpStatus.valueOf(row.followUpStatus()))
+                .contactRound(row.contactRound())
+                .hasReply(row.hasReply())
+                .repliedAt(row.repliedAt())
+                .latestMessageTemplateId(row.latestMessageTemplateId())
+                .latestMessageDeliveryStatus(row.latestMessageDeliveryStatus())
+                .latestContactAt(row.latestContactAt())
+                .memo(row.memo())
+                .nonConversionReasons(reasons)
+                .followUpCompleted(row.followUpCompleted())
                 .build();
     }
 

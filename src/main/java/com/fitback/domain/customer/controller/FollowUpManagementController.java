@@ -1,7 +1,9 @@
 package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.FollowUpBoardQuery;
+import com.fitback.domain.customer.dto.request.FollowUpEndedQuery;
 import com.fitback.domain.customer.dto.response.FollowUpBoardResponse;
+import com.fitback.domain.customer.dto.response.FollowUpEndedListResponse;
 import com.fitback.domain.customer.dto.response.FollowUpSummaryResponse;
 import com.fitback.domain.customer.service.FollowUpManagementService;
 import com.fitback.global.response.ApiResponse;
@@ -58,6 +60,22 @@ public class FollowUpManagementController {
             @ParameterObject FollowUpBoardQuery query
     ) {
         FollowUpBoardResponse response = followUpManagementService.getBoard(storeId, query);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @GetMapping("/ended")
+    @Operation(summary = "종료된 후속 연락 목록 조회", description = "완료 또는 종료된 후속 연락 목록을 최근 연락일 기준으로 조회합니다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당 또는 잘못된 검색·필터·페이지 조건"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요")
+    })
+    public ResponseEntity<ApiResponse<FollowUpEndedListResponse>> getEndedFollowUps(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @ParameterObject FollowUpEndedQuery query
+    ) {
+        FollowUpEndedListResponse response = followUpManagementService.getEndedFollowUps(storeId, query);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }
