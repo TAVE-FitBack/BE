@@ -561,6 +561,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .memo("부담 적은 시작 옵션 안내")
                 .build();
         FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
@@ -614,6 +615,7 @@ class CustomerServiceTest {
                 .versionType(MessageVersionType.STANDARD.name())
                 .tonePreset(MessageTonePreset.FRIENDLY.name())
                 .deliveryStatus("DRAFT")
+                .contactRound(2)
                 .generatedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
                 .updatedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
                 .build();
@@ -663,6 +665,7 @@ class CustomerServiceTest {
                 messageTemplate.getCustomer() == customer
                         && messageTemplate.getFollowUp() == followUp
                         && eventId.equals(messageTemplate.getEventId())
+                        && Integer.valueOf(2).equals(messageTemplate.getContactRound())
                         && messageTemplate.getScheduledAt() == null
                         && "DRAFT".equals(messageTemplate.getDeliveryStatus())
                         && MessageTonePreset.FRIENDLY.name().equals(messageTemplate.getTonePreset())

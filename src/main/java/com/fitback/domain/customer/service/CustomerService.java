@@ -263,6 +263,7 @@ public class CustomerService {
                 .versionType(request.getVersionType().name())
                 .tonePreset(request.getTonePreset().name())
                 .deliveryStatus(MessageDeliveryStatus.DRAFT.name())
+                .contactRound(followUp.getContactRound())
                 .scheduledAt(null)
                 .generatedAt(now)
                 .updatedAt(now)
