@@ -1,5 +1,7 @@
 package com.fitback.domain.customer.controller;
 
+import com.fitback.domain.customer.dto.request.FollowUpBoardQuery;
+import com.fitback.domain.customer.dto.response.FollowUpBoardResponse;
 import com.fitback.domain.customer.dto.response.FollowUpSummaryResponse;
 import com.fitback.domain.customer.service.FollowUpManagementService;
 import com.fitback.global.response.ApiResponse;
@@ -8,6 +10,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,6 +42,22 @@ public class FollowUpManagementController {
             @RequestParam(required = false) String month
     ) {
         FollowUpSummaryResponse response = followUpManagementService.getSummary(storeId, month);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @GetMapping("/board")
+    @Operation(summary = "후속 연락 보드 조회", description = "오늘 연락 또는 연락 예정 대상을 후속 연락 차수별 컬럼으로 조회합니다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당 또는 잘못된 검색·필터 조건"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요")
+    })
+    public ResponseEntity<ApiResponse<FollowUpBoardResponse>> getBoard(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @ParameterObject FollowUpBoardQuery query
+    ) {
+        FollowUpBoardResponse response = followUpManagementService.getBoard(storeId, query);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }
