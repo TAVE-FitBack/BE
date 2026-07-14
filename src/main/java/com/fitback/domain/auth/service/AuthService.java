@@ -69,6 +69,10 @@ public class AuthService {
         String email = redisTemplate.opsForValue().get(EMAIL_VERIFY_PREFIX + token);
 
         if (email == null) {
+            String verifiedEmail = redisTemplate.opsForValue().get(EMAIL_VERIFIED_PREFIX + token);
+            if (verifiedEmail != null) {
+                return;
+            }
             throw new BusinessException(AuthErrorCode.INVALID_VERIFICATION_TOKEN);
         }
 

@@ -30,6 +30,9 @@ public class Store extends BaseTimeEntity {
     @Column(length = 20)
     private String phone;
 
-    @Column(name = "operating_hours", length = 100)
-    private String operatingHours;
+    @Column(name = "business_number", length = 12)
+    private String businessNumber;
+
+    @Column(name = "address", length = 200)
+    private String address;
 }

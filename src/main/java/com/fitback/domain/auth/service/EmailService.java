@@ -14,11 +14,11 @@ public class EmailService {
 
     private final JavaMailSender mailSender;
 
-    @Value("${app.base-url}")
-    private String baseUrl;
+    @Value("${app.frontend-url}")
+    private String frontendUrl;
 
     public void sendVerification(String to, String token) {
-        String link = baseUrl + "/api/auth/verify-email?token=" + token;
+        String link = frontendUrl + "/?token=" + token;
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setTo(to);

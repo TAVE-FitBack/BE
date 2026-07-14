@@ -3,6 +3,7 @@ package com.fitback.domain.store.dto.request;
 import com.fitback.domain.store.enums.StoreType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -19,5 +20,9 @@ public class StoreSetupRequest {
     private StoreType storeType;
 
     private String phone;
-    private String operatingHours;
+
+    @Pattern(regexp = "^\\d{3}-\\d{2}-\\d{5}$", message = "사업자번호 형식이 올바르지 않습니다.")
+    private String businessNumber;
+
+    private String address;
 }
