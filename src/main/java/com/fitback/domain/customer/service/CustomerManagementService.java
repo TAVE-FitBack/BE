@@ -14,6 +14,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationSearchCondition;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.FollowUpStageRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InflowPathCountRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryRow;
@@ -23,6 +24,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator.MonthRange;
+import com.fitback.domain.customer.support.FollowUpManagementStageAssembler;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
 import com.fitback.domain.user.repository.UserRepository;
@@ -59,6 +61,7 @@ public class CustomerManagementService {
     private final ServiceRepository serviceRepository;
     private final InflowPathOptionRepository inflowPathOptionRepository;
     private final UserRepository userRepository;
+    private final FollowUpManagementStageAssembler followUpManagementStageAssembler;
 
     public CustomerManagementSummaryResponse getSummary(UUID storeId, String month) {
         if (storeId == null) {
@@ -111,10 +114,14 @@ public class CustomerManagementService {
 
         Map<UUID, List<CustomerManagementConsultationListResponse.NonConversionReasonInfo>> reasonsByCustomer =
                 findReasonsByCustomer(pageRows.content());
+        Map<UUID, FollowUpStageRow> activeFollowUpsByCustomer = findActiveFollowUpsByCustomer(pageRows.content());
+        Map<UUID, FollowUpStageRow> latestFollowUpsByCustomer = findLatestFollowUpsByCustomer(pageRows.content());
         List<CustomerManagementConsultationListResponse.ConsultationItem> content = pageRows.content().stream()
                 .map(row -> toConsultationItem(
                         row,
-                        reasonsByCustomer.getOrDefault(row.customerId(), List.of())
+                        reasonsByCustomer.getOrDefault(row.customerId(), List.of()),
+                        activeFollowUpsByCustomer.get(row.customerId()),
+                        latestFollowUpsByCustomer.get(row.customerId())
                 ))
                 .toList();
 
@@ -301,9 +308,39 @@ public class CustomerManagementService {
                 ));
     }
 
+    private Map<UUID, FollowUpStageRow> findActiveFollowUpsByCustomer(List<ConsultationRow> rows) {
+        if (rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<UUID> customerIds = rows.stream()
+                .map(ConsultationRow::customerId)
+                .collect(Collectors.toSet());
+        return queryRepository.findPendingFollowUps(customerIds).stream()
+                .collect(Collectors.toMap(
+                        FollowUpStageRow::customerId,
+                        row -> row
+                ));
+    }
+
+    private Map<UUID, FollowUpStageRow> findLatestFollowUpsByCustomer(List<ConsultationRow> rows) {
+        if (rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<UUID> customerIds = rows.stream()
+                .map(ConsultationRow::customerId)
+                .collect(Collectors.toSet());
+        return queryRepository.findLatestFollowUps(customerIds).stream()
+                .collect(Collectors.toMap(
+                        FollowUpStageRow::customerId,
+                        row -> row
+                ));
+    }
+
     private CustomerManagementConsultationListResponse.ConsultationItem toConsultationItem(
             ConsultationRow row,
-            List<CustomerManagementConsultationListResponse.NonConversionReasonInfo> reasons
+            List<CustomerManagementConsultationListResponse.NonConversionReasonInfo> reasons,
+            FollowUpStageRow activeFollowUp,
+            FollowUpStageRow latestFollowUp
     ) {
         return CustomerManagementConsultationListResponse.ConsultationItem.builder()
                 .customerId(row.customerId())
@@ -316,6 +353,7 @@ public class CustomerManagementService {
                 .inflowPathId(row.inflowPathId())
                 .inflowPathName(row.inflowPathName())
                 .managementStage(ConsultationStage.valueOf(row.stage()))
+                .followUpManagementStage(followUpManagementStageAssembler.assemble(activeFollowUp, latestFollowUp))
                 .latestMemo(row.summary())
                 .nonConversionReasons(reasons)
                 .leadTemperature(row.leadTemperature())

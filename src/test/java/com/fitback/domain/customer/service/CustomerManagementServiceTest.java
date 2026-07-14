@@ -11,6 +11,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationSearchCondition;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.FollowUpStageRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InflowPathCountRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryRow;
@@ -20,6 +21,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator.MonthRange;
+import com.fitback.domain.customer.support.FollowUpManagementStageAssembler;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
@@ -54,6 +56,8 @@ class CustomerManagementServiceTest {
     private InflowPathOptionRepository inflowPathOptionRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private FollowUpManagementStageAssembler followUpManagementStageAssembler;
     @Mock
     private AiInquiryClient aiInquiryClient;
 
@@ -184,6 +188,27 @@ class CustomerManagementServiceTest {
                         new NonConversionReasonRow(customerId, "PRICE_BURDEN"),
                         new NonConversionReasonRow(customerId, "SCHEDULE_CONFLICT")
                 ));
+        FollowUpStageRow activeFollowUp = new FollowUpStageRow(
+                customerId,
+                "PENDING",
+                2,
+                OffsetDateTime.parse("2026-10-13T10:00:00+09:00"),
+                OffsetDateTime.parse("2026-10-13T10:00:00+09:00")
+        );
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse followUpStage =
+                CustomerManagementConsultationListResponse.FollowUpManagementStageResponse.builder()
+                        .type(CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND)
+                        .contactRound(2)
+                        .label("2차 연락 대상")
+                        .build();
+        when(queryRepository.findPendingFollowUps(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(activeFollowUp));
+        when(queryRepository.findLatestFollowUps(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of());
+        when(followUpManagementStageAssembler.assemble(
+                org.mockito.ArgumentMatchers.eq(activeFollowUp),
+                org.mockito.ArgumentMatchers.isNull()
+        )).thenReturn(followUpStage);
 
         CustomerManagementConsultationListResponse response =
                 customerManagementService.getConsultations(storeId, query);
@@ -197,6 +222,7 @@ class CustomerManagementServiceTest {
             assertThat(item.getCustomerId()).isEqualTo(customerId);
             assertThat(item.getLatestMemo()).isEqualTo("최신 상담 요약");
             assertThat(item.getManagementStage().name()).isEqualTo("CONSULTATION");
+            assertThat(item.getFollowUpManagementStage()).isSameAs(followUpStage);
             assertThat(item.getLeadTemperature()).isEqualTo("WARM");
             assertThat(item.getCounselorName()).isEqualTo("이담당");
             assertThat(item.getNonConversionReasons())
