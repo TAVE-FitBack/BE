@@ -1673,6 +1673,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .build();
         CustomerStatusUpdateRequest request = customerStatusUpdateRequest(CustomerStatus.REGISTERED, registeredServiceId);
 
@@ -1694,6 +1695,7 @@ class CustomerServiceTest {
         assertThat(customer.getRegisteredService()).isEqualTo(registeredService);
         assertThat(customer.getRegisteredAt()).isNotNull();
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
                         && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
@@ -1703,6 +1705,59 @@ class CustomerServiceTest {
                         && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
         ));
         verifyNoInteractions(customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+    }
+
+    @Test
+    @DisplayName("고객 상태를 LOST로 변경하면 기존 PENDING follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    void updateCustomerStatusLostClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(3)
+                .build();
+        CustomerStatusUpdateRequest request = customerStatusUpdateRequest(CustomerStatus.LOST, null);
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(followUp));
+
+        CustomerStatusUpdateResponse response = customerService.updateCustomerStatus(storeId, customerId, request);
+
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getStatus()).isEqualTo(CustomerStatus.LOST);
+        assertThat(response.getFollowUpAction()).isEqualTo("CLOSED");
+        assertThat(response.isNextActionRegenerationAvailable()).isFalse();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.LOST);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(3);
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
+                        && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
+                        && customerId.equals(timeline.getRelatedId())
+                        && CustomerStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
+                        && CustomerStatus.LOST.equals(timeline.getAfterValue().get("status"))
+                        && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
+        ));
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
     }
 
     @Test
