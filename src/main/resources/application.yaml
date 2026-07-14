@@ -49,6 +49,7 @@ jwt:
 
 app:
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  frontend-url: ${FRONTEND_URL:https://fitback-sigma.vercel.app}
 
 ai:
   base-url: ${AI_BASE_URL:http://localhost:8000}
