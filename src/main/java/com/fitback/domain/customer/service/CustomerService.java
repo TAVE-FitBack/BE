@@ -513,6 +513,11 @@ public class CustomerService {
         List<NonConversionReason> reasons = nonConversionReasonRepository
                 .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
 
+        FollowUp latestFollowUp = followUpRepository
+                .findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId)
+                .orElse(null);
+        int nextContactRound = resolveNextContactRound(latestFollowUp);
+
         AiNextActionRegenerateResponse aiResponse = aiConsultationClient.regenerateNextAction(
                 buildNextActionAiRequest(customer, latestConsultation, customerAiInsight, reasons)
         );
@@ -532,6 +537,7 @@ public class CustomerService {
                 .consultation(latestConsultation)
                 .recommendContactDate(aiResponse.getFollowUp().getRecommendContactDate())
                 .status(FollowUpStatus.PENDING)
+                .contactRound(nextContactRound)
                 .memo(resolveNextActionMemo(aiResponse))
                 .build();
         FollowUp savedFollowUp = followUpRepository.save(newFollowUp);
@@ -547,6 +553,7 @@ public class CustomerService {
                 .oldFollowUpStatus(oldFollowUp != null ? oldFollowUp.getStatus() : null)
                 .newFollowUpId(savedFollowUp.getId())
                 .newFollowUpStatus(savedFollowUp.getStatus())
+                .contactRound(savedFollowUp.getContactRound())
                 .recommendContactDate(savedFollowUp.getRecommendContactDate())
                 .priorityScore(aiResponse.getPriorityScore())
                 .build();
@@ -961,10 +968,25 @@ public class CustomerService {
         };
     }
 
+    private int resolveNextContactRound(FollowUp latestFollowUp) {
+        if (latestFollowUp == null) {
+            return 1;
+        }
+        int currentRound = latestFollowUp.getContactRound();
+        if (latestFollowUp.getStatus() == FollowUpStatus.COMPLETED) {
+            if (currentRound >= 3) {
+                throw new BusinessException(CustomerErrorCode.FOLLOW_UP_ROUND_LIMIT_EXCEEDED);
+            }
+            return currentRound + 1;
+        }
+        return currentRound;
+    }
+
     private Map<String, Object> buildFollowUpTimelineValue(FollowUp followUp, String nextActionTitle) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("followUpId", followUp.getId());
         value.put("status", followUp.getStatus());
+        value.put("contactRound", followUp.getContactRound());
         value.put("recommendContactDate", followUp.getRecommendContactDate());
         value.put("nextActionTitle", nextActionTitle);
         return value;

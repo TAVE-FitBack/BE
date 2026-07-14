@@ -1580,6 +1580,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 8))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .build();
         FollowUp savedFollowUp = FollowUp.builder()
                 .id(newFollowUpId)
@@ -1587,6 +1588,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .memo("새 액션")
                 .build();
         AiNextActionRegenerateResponse aiResponse = nextActionAiResponse();
@@ -1597,6 +1599,8 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of(reason));
+        when(followUpRepository.findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId))
+                .thenReturn(Optional.of(oldFollowUp));
         when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class))).thenReturn(aiResponse);
         when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
                 .thenReturn(Optional.of(oldFollowUp));
@@ -1613,6 +1617,7 @@ class CustomerServiceTest {
         assertThat(response.getOldFollowUpStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
         assertThat(response.getNewFollowUpId()).isEqualTo(newFollowUpId);
         assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        assertThat(response.getContactRound()).isEqualTo(2);
         assertThat(response.getRecommendContactDate()).isEqualTo(LocalDate.of(2026, 7, 10));
         assertThat(response.getPriorityScore()).isEqualTo(82);
         assertThat(oldFollowUp.getStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
@@ -1631,6 +1636,7 @@ class CustomerServiceTest {
                 followUp.getCustomer() == customer
                         && followUp.getConsultation() == latestConsultation
                         && followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 2
                         && LocalDate.of(2026, 7, 10).equals(followUp.getRecommendContactDate())
         ));
         verify(followUpAiInsightRepository).save(argThat(insight ->
@@ -1646,6 +1652,62 @@ class CustomerServiceTest {
                         && FollowUpStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
                         && FollowUpStatus.PENDING.equals(timeline.getAfterValue().get("status"))
         ));
+    }
+
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최근 1차 COMPLETED follow_up 이후 2차 PENDING을 생성한다")
+    void regenerateNextActionCreatesSecondRoundAfterFirstCompleted() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 1, null, 2);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(2);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 2
+        ));
+    }
+
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최근 2차 COMPLETED follow_up 이후 3차 PENDING을 생성한다")
+    void regenerateNextActionCreatesThirdRoundAfterSecondCompleted() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 2, null, 3);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(3);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 3
+        ));
+    }
+
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최근 3차 COMPLETED follow_up 이후 FOLLOW_UP_ROUND_LIMIT_EXCEEDED 예외가 발생한다")
+    void regenerateNextActionRoundLimitExceededAfterThirdCompleted() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 3, null, 3);
+
+        assertThatThrownBy(() -> customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_ROUND_LIMIT_EXCEEDED);
+
+        verifyNoInteractions(aiConsultationClient);
+        verify(followUpRepository, never()).save(any(FollowUp.class));
     }
 
     @Test
@@ -2016,6 +2078,86 @@ class CustomerServiceTest {
                         .actionBasis(Map.of("reason", "일정 조율이 주요 이탈 요인"))
                         .build())
                 .build();
+    }
+
+    private RegenerateContext prepareRegenerateContext(
+            FollowUpStatus latestStatus,
+            int latestRound,
+            Integer pendingRound,
+            int savedRound
+    ) {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID savedFollowUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        CustomerAiInsight aiInsight = CustomerAiInsight.builder()
+                .customer(customer)
+                .leadTemperature("HOT")
+                .temperatureBasis("수정된 온도 근거")
+                .priorityScore(70)
+                .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .build();
+        FollowUp latestFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 8))
+                .status(latestStatus)
+                .contactRound(latestRound)
+                .build();
+        FollowUp pendingFollowUp = pendingRound == null
+                ? null
+                : FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 8))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(pendingRound)
+                .build();
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(savedFollowUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(savedRound)
+                .memo("새 액션")
+                .build();
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of());
+        when(followUpRepository.findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId))
+                .thenReturn(Optional.of(latestFollowUp));
+
+        boolean roundLimitExceeded = latestStatus == FollowUpStatus.COMPLETED && latestRound >= 3;
+        if (!roundLimitExceeded) {
+            when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class)))
+                    .thenReturn(nextActionAiResponse());
+            when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                    .thenReturn(Optional.ofNullable(pendingFollowUp));
+            when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+        }
+
+        return new RegenerateContext(storeId, customerId);
+    }
+
+    private record RegenerateContext(UUID storeId, UUID customerId) {
     }
 
     private CustomerStatusUpdateRequest customerStatusUpdateRequest(
