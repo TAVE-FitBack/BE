@@ -259,6 +259,77 @@ public class CustomerManagementQueryRepository {
         );
     }
 
+    public List<FollowUpStageRow> findPendingFollowUps(Collection<UUID> customerIds) {
+        if (customerIds.isEmpty()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT customer_id,
+                       status,
+                       contact_round,
+                       updated_at,
+                       created_at
+                FROM follow_up
+                WHERE customer_id IN (:customerIds)
+                  AND status = 'PENDING'
+                ORDER BY customer_id, updated_at DESC, created_at DESC, id DESC
+                """;
+
+        return jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("customerIds", customerIds),
+                (rs, rowNum) -> new FollowUpStageRow(
+                        rs.getObject("customer_id", UUID.class),
+                        rs.getString("status"),
+                        rs.getInt("contact_round"),
+                        rs.getObject("updated_at", OffsetDateTime.class),
+                        rs.getObject("created_at", OffsetDateTime.class)
+                )
+        );
+    }
+
+    public List<FollowUpStageRow> findLatestFollowUps(Collection<UUID> customerIds) {
+        if (customerIds.isEmpty()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT customer_id,
+                       status,
+                       contact_round,
+                       updated_at,
+                       created_at
+                FROM (
+                    SELECT f.customer_id,
+                           f.status,
+                           f.contact_round,
+                           f.updated_at,
+                           f.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.customer_id
+                               ORDER BY f.updated_at DESC, f.created_at DESC, f.id DESC
+                           ) AS row_number
+                    FROM follow_up f
+                    WHERE f.customer_id IN (:customerIds)
+                ) ranked_follow_up
+                WHERE row_number = 1
+                ORDER BY customer_id
+                """;
+
+        return jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("customerIds", customerIds),
+                (rs, rowNum) -> new FollowUpStageRow(
+                        rs.getObject("customer_id", UUID.class),
+                        rs.getString("status"),
+                        rs.getInt("contact_round"),
+                        rs.getObject("updated_at", OffsetDateTime.class),
+                        rs.getObject("created_at", OffsetDateTime.class)
+                )
+        );
+    }
+
     public InquiryPageRows findInquiries(
             UUID storeId,
             MonthRange range,
@@ -503,6 +574,15 @@ public class CustomerManagementQueryRepository {
     public record NonConversionReasonRow(
             UUID customerId,
             String reasonType
+    ) {
+    }
+
+    public record FollowUpStageRow(
+            UUID customerId,
+            String status,
+            int contactRound,
+            OffsetDateTime updatedAt,
+            OffsetDateTime createdAt
     ) {
     }
 
