@@ -11,6 +11,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationSearchCondition;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.FollowUpStageRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InflowPathCountRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryRow;
@@ -20,6 +21,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator.MonthRange;
+import com.fitback.domain.customer.support.FollowUpManagementStageAssembler;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.user.repository.UserRepository;
 import com.fitback.global.exception.BusinessException;
@@ -54,6 +56,8 @@ class CustomerManagementServiceTest {
     private InflowPathOptionRepository inflowPathOptionRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private FollowUpManagementStageAssembler followUpManagementStageAssembler;
     @Mock
     private AiInquiryClient aiInquiryClient;
 
@@ -184,6 +188,27 @@ class CustomerManagementServiceTest {
                         new NonConversionReasonRow(customerId, "PRICE_BURDEN"),
                         new NonConversionReasonRow(customerId, "SCHEDULE_CONFLICT")
                 ));
+        FollowUpStageRow activeFollowUp = new FollowUpStageRow(
+                customerId,
+                "PENDING",
+                2,
+                OffsetDateTime.parse("2026-10-13T10:00:00+09:00"),
+                OffsetDateTime.parse("2026-10-13T10:00:00+09:00")
+        );
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse followUpStage =
+                CustomerManagementConsultationListResponse.FollowUpManagementStageResponse.builder()
+                        .type(CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND)
+                        .contactRound(2)
+                        .label("2차 연락 대상")
+                        .build();
+        when(queryRepository.findPendingFollowUps(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(activeFollowUp));
+        when(queryRepository.findLatestFollowUps(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of());
+        when(followUpManagementStageAssembler.assemble(
+                org.mockito.ArgumentMatchers.eq(activeFollowUp),
+                org.mockito.ArgumentMatchers.isNull()
+        )).thenReturn(followUpStage);
 
         CustomerManagementConsultationListResponse response =
                 customerManagementService.getConsultations(storeId, query);
@@ -197,6 +222,7 @@ class CustomerManagementServiceTest {
             assertThat(item.getCustomerId()).isEqualTo(customerId);
             assertThat(item.getLatestMemo()).isEqualTo("최신 상담 요약");
             assertThat(item.getManagementStage().name()).isEqualTo("CONSULTATION");
+            assertThat(item.getFollowUpManagementStage()).isSameAs(followUpStage);
             assertThat(item.getLeadTemperature()).isEqualTo("WARM");
             assertThat(item.getCounselorName()).isEqualTo("이담당");
             assertThat(item.getNonConversionReasons())
@@ -216,6 +242,162 @@ class CustomerManagementServiceTest {
         assertThat(conditionCaptor.getValue().keyword()).isEqualTo("김민지");
         assertThat(conditionCaptor.getValue().gender()).isEqualTo("FEMALE");
         assertThat(conditionCaptor.getValue().status()).isEqualTo("PENDING");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("consultation list maps follow_up stages from batched active and latest rows")
+    void getConsultationsWithFollowUpManagementStages() {
+        UUID storeId = UUID.randomUUID();
+        UUID roundOneCustomerId = UUID.randomUUID();
+        UUID roundTwoCustomerId = UUID.randomUUID();
+        UUID roundThreeCustomerId = UUID.randomUUID();
+        UUID completedCustomerId = UUID.randomUUID();
+        UUID closedCustomerId = UUID.randomUUID();
+        UUID noneCustomerId = UUID.randomUUID();
+        UUID otherStoreCustomerId = UUID.randomUUID();
+        ConsultationListQuery query = new ConsultationListQuery();
+        query.setMonth("2026-10");
+        query.setPage(0);
+        query.setSize(10);
+
+        List<ConsultationRow> rows = List.of(
+                consultationRow(roundOneCustomerId, "Round One"),
+                consultationRow(roundTwoCustomerId, "Round Two"),
+                consultationRow(roundThreeCustomerId, "Round Three"),
+                consultationRow(completedCustomerId, "Completed"),
+                consultationRow(closedCustomerId, "Closed"),
+                consultationRow(noneCustomerId, "None")
+        );
+        when(queryRepository.findConsultations(
+                org.mockito.ArgumentMatchers.eq(storeId),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(10)
+        )).thenReturn(new ConsultationPageRows(rows, rows.size()));
+        when(queryRepository.findNonConversionReasons(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of());
+
+        FollowUpStageRow roundOne = followUp(roundOneCustomerId, "PENDING", 1);
+        FollowUpStageRow roundTwo = followUp(roundTwoCustomerId, "PENDING", 2);
+        FollowUpStageRow roundThree = followUp(roundThreeCustomerId, "PENDING", 3);
+        FollowUpStageRow completed = followUp(completedCustomerId, "COMPLETED", 3);
+        FollowUpStageRow closed = followUp(closedCustomerId, "CLOSED", 2);
+        when(queryRepository.findPendingFollowUps(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(roundOne, roundTwo, roundThree));
+        when(queryRepository.findLatestFollowUps(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(completed, closed));
+
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse roundOneStage =
+                followUpStage(CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND, 1, "1st");
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse roundTwoStage =
+                followUpStage(CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND, 2, "2nd");
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse roundThreeStage =
+                followUpStage(CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND, 3, "3rd");
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse completedStage =
+                followUpStage(CustomerManagementConsultationListResponse.FollowUpManagementStageType.COMPLETED, 3, "completed");
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse closedStage =
+                followUpStage(CustomerManagementConsultationListResponse.FollowUpManagementStageType.CLOSED, 2, "closed");
+        CustomerManagementConsultationListResponse.FollowUpManagementStageResponse noneStage =
+                followUpStage(CustomerManagementConsultationListResponse.FollowUpManagementStageType.NONE, null, null);
+        when(followUpManagementStageAssembler.assemble(org.mockito.ArgumentMatchers.eq(roundOne),
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(roundOneStage);
+        when(followUpManagementStageAssembler.assemble(org.mockito.ArgumentMatchers.eq(roundTwo),
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(roundTwoStage);
+        when(followUpManagementStageAssembler.assemble(org.mockito.ArgumentMatchers.eq(roundThree),
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(roundThreeStage);
+        when(followUpManagementStageAssembler.assemble(org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(completed))).thenReturn(completedStage);
+        when(followUpManagementStageAssembler.assemble(org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(closed))).thenReturn(closedStage);
+        when(followUpManagementStageAssembler.assemble(org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(noneStage);
+
+        CustomerManagementConsultationListResponse response =
+                customerManagementService.getConsultations(storeId, query);
+
+        assertThat(response.getContent()).hasSize(6);
+        assertThat(response.getContent())
+                .extracting(item -> item.getFollowUpManagementStage().getType())
+                .containsExactly(
+                        CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND,
+                        CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND,
+                        CustomerManagementConsultationListResponse.FollowUpManagementStageType.ROUND,
+                        CustomerManagementConsultationListResponse.FollowUpManagementStageType.COMPLETED,
+                        CustomerManagementConsultationListResponse.FollowUpManagementStageType.CLOSED,
+                        CustomerManagementConsultationListResponse.FollowUpManagementStageType.NONE
+                );
+        assertThat(response.getContent())
+                .extracting(item -> item.getFollowUpManagementStage().getContactRound())
+                .containsExactly(1, 2, 3, 3, 2, null);
+
+        ArgumentCaptor<java.util.Collection<UUID>> activeCustomerIdsCaptor =
+                ArgumentCaptor.forClass(java.util.Collection.class);
+        ArgumentCaptor<java.util.Collection<UUID>> latestCustomerIdsCaptor =
+                ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(queryRepository).findPendingFollowUps(activeCustomerIdsCaptor.capture());
+        verify(queryRepository).findLatestFollowUps(latestCustomerIdsCaptor.capture());
+        assertThat(activeCustomerIdsCaptor.getValue())
+                .containsExactlyInAnyOrder(
+                        roundOneCustomerId,
+                        roundTwoCustomerId,
+                        roundThreeCustomerId,
+                        completedCustomerId,
+                        closedCustomerId,
+                        noneCustomerId
+                )
+                .doesNotContain(otherStoreCustomerId);
+        assertThat(latestCustomerIdsCaptor.getValue())
+                .containsExactlyInAnyOrderElementsOf(activeCustomerIdsCaptor.getValue());
+    }
+
+    @Test
+    @DisplayName("consultation list passes managementStage filter to repository condition")
+    void getConsultationsWithManagementStageFilter() {
+        for (String filter : List.of("ROUND_1", "ROUND_2", "ROUND_3", "COMPLETED", "CLOSED", "NONE")) {
+            UUID storeId = UUID.randomUUID();
+            ConsultationListQuery query = new ConsultationListQuery();
+            query.setMonth("2026-10");
+            query.setManagementStage(filter.toLowerCase(java.util.Locale.ROOT));
+            query.setPage(0);
+            query.setSize(10);
+            when(queryRepository.findConsultations(
+                    org.mockito.ArgumentMatchers.eq(storeId),
+                    org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.eq(0),
+                    org.mockito.ArgumentMatchers.eq(10)
+            )).thenReturn(new ConsultationPageRows(List.of(), 0));
+
+            customerManagementService.getConsultations(storeId, query);
+
+            ArgumentCaptor<ConsultationSearchCondition> conditionCaptor =
+                    ArgumentCaptor.forClass(ConsultationSearchCondition.class);
+            verify(queryRepository).findConsultations(
+                    org.mockito.ArgumentMatchers.eq(storeId),
+                    org.mockito.ArgumentMatchers.any(),
+                    conditionCaptor.capture(),
+                    org.mockito.ArgumentMatchers.eq(0),
+                    org.mockito.ArgumentMatchers.eq(10)
+            );
+            assertThat(conditionCaptor.getValue().managementStage()).isEqualTo(filter);
+            org.mockito.Mockito.reset(queryRepository);
+        }
+    }
+
+    @Test
+    @DisplayName("invalid managementStage filter is rejected")
+    void rejectInvalidManagementStageFilter() {
+        ConsultationListQuery query = new ConsultationListQuery();
+        query.setManagementStage("ROUND");
+
+        assertManagementError(
+                () -> customerManagementService.getConsultations(UUID.randomUUID(), query),
+                CustomerManagementErrorCode.INVALID_MANAGEMENT_STAGE
+        );
+
+        verifyNoInteractions(queryRepository);
     }
 
     @Test
@@ -471,6 +653,44 @@ class CustomerManagementServiceTest {
         );
 
         verifyNoInteractions(queryRepository, aiInquiryClient);
+    }
+
+    private ConsultationRow consultationRow(UUID customerId, String name) {
+        return new ConsultationRow(
+                customerId,
+                name,
+                "010-0000-0000",
+                "FEMALE",
+                LocalDate.of(2000, 1, 1),
+                UUID.randomUUID(),
+                "PT",
+                UUID.randomUUID(),
+                "Walk in",
+                "CONSULTATION",
+                "Latest memo",
+                "WARM",
+                "PENDING",
+                OffsetDateTime.parse("2026-10-12T14:00:00+09:00"),
+                UUID.randomUUID(),
+                "Counselor"
+        );
+    }
+
+    private FollowUpStageRow followUp(UUID customerId, String status, int contactRound) {
+        OffsetDateTime now = OffsetDateTime.parse("2026-10-13T10:00:00+09:00");
+        return new FollowUpStageRow(customerId, status, contactRound, now, now);
+    }
+
+    private CustomerManagementConsultationListResponse.FollowUpManagementStageResponse followUpStage(
+            CustomerManagementConsultationListResponse.FollowUpManagementStageType type,
+            Integer contactRound,
+            String label
+    ) {
+        return CustomerManagementConsultationListResponse.FollowUpManagementStageResponse.builder()
+                .type(type)
+                .contactRound(contactRound)
+                .label(label)
+                .build();
     }
 
     private void assertManagementError(Runnable action, CustomerManagementErrorCode expectedErrorCode) {

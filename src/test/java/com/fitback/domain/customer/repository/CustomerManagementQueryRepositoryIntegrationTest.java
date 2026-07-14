@@ -186,7 +186,7 @@ class CustomerManagementQueryRepositoryIntegrationTest {
     @DisplayName("PostgreSQL에서 고객별 session_no가 가장 큰 상담 한 행만 조회한다")
     void findLatestConsultationPerCustomer() {
         ConsultationSearchCondition condition = new ConsultationSearchCondition(
-                null, null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, null, null, null
         );
 
         ConsultationPageRows result = queryRepository.findConsultations(
@@ -225,7 +225,147 @@ class CustomerManagementQueryRepositoryIntegrationTest {
                 "PRICE_BURDEN",
                 "PENDING",
                 "WARM",
+                null,
                 counselorId
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
+    @Test
+    @DisplayName("managementStage ROUND 필터를 PostgreSQL 조회 조건에 적용한다")
+    void applyRoundManagementStageFilter() {
+        ConsultationSearchCondition roundOne = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "ROUND_1", null
+        );
+        ConsultationSearchCondition roundTwo = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "ROUND_2", null
+        );
+
+        ConsultationPageRows roundOneResult = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                roundOne,
+                0,
+                10
+        );
+        ConsultationPageRows roundTwoResult = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                roundTwo,
+                0,
+                10
+        );
+
+        assertThat(roundOneResult.totalElements()).isEqualTo(1);
+        assertThat(roundOneResult.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+        assertThat(roundTwoResult.totalElements()).isZero();
+        assertThat(roundTwoResult.content()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("managementStage COMPLETED 필터를 PostgreSQL 조회 조건에 적용한다")
+    void applyCompletedManagementStageFilter() {
+        jdbcTemplate.update("""
+                UPDATE follow_up
+                SET status = 'COMPLETED',
+                    contact_round = 3
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "COMPLETED", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
+    @Test
+    @DisplayName("managementStage CLOSED filter applies PostgreSQL follow_up condition")
+    void applyClosedManagementStageFilter() {
+        jdbcTemplate.update("""
+                UPDATE follow_up
+                SET status = 'CLOSED',
+                    contact_round = 2
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "CLOSED", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
+    @Test
+    @DisplayName("managementStage NONE filter includes customers without follow_up")
+    void applyNoneManagementStageFilterWithoutFollowUp() {
+        jdbcTemplate.update("""
+                DELETE FROM follow_up
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "NONE", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
+    @Test
+    @DisplayName("managementStage NONE filter includes non-terminal latest follow_up")
+    void applyNoneManagementStageFilterWithNonTerminalLatestFollowUp() {
+        jdbcTemplate.update("""
+                UPDATE follow_up
+                SET status = 'COMPLETED',
+                    contact_round = 2
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "NONE", null
         );
 
         ConsultationPageRows result = queryRepository.findConsultations(

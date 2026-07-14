@@ -259,6 +259,90 @@ public class CustomerManagementQueryRepository {
         );
     }
 
+    public List<FollowUpStageRow> findPendingFollowUps(Collection<UUID> customerIds) {
+        if (customerIds.isEmpty()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT customer_id,
+                       status,
+                       contact_round,
+                       updated_at,
+                       created_at
+                FROM (
+                    SELECT f.customer_id,
+                           f.id,
+                           f.status,
+                           f.contact_round,
+                           f.updated_at,
+                           f.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.customer_id
+                               ORDER BY f.updated_at DESC, f.created_at DESC, f.id DESC
+                           ) AS row_number
+                    FROM follow_up f
+                    WHERE f.customer_id IN (:customerIds)
+                      AND f.status = 'PENDING'
+                ) ranked_follow_up
+                WHERE row_number = 1
+                ORDER BY customer_id
+                """;
+
+        return jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("customerIds", customerIds),
+                (rs, rowNum) -> new FollowUpStageRow(
+                        rs.getObject("customer_id", UUID.class),
+                        rs.getString("status"),
+                        rs.getInt("contact_round"),
+                        rs.getObject("updated_at", OffsetDateTime.class),
+                        rs.getObject("created_at", OffsetDateTime.class)
+                )
+        );
+    }
+
+    public List<FollowUpStageRow> findLatestFollowUps(Collection<UUID> customerIds) {
+        if (customerIds.isEmpty()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT customer_id,
+                       status,
+                       contact_round,
+                       updated_at,
+                       created_at
+                FROM (
+                    SELECT f.customer_id,
+                           f.status,
+                           f.contact_round,
+                           f.updated_at,
+                           f.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.customer_id
+                               ORDER BY f.updated_at DESC, f.created_at DESC, f.id DESC
+                           ) AS row_number
+                    FROM follow_up f
+                    WHERE f.customer_id IN (:customerIds)
+                ) ranked_follow_up
+                WHERE row_number = 1
+                ORDER BY customer_id
+                """;
+
+        return jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("customerIds", customerIds),
+                (rs, rowNum) -> new FollowUpStageRow(
+                        rs.getObject("customer_id", UUID.class),
+                        rs.getString("status"),
+                        rs.getInt("contact_round"),
+                        rs.getObject("updated_at", OffsetDateTime.class),
+                        rs.getObject("created_at", OffsetDateTime.class)
+                )
+        );
+    }
+
     public InquiryPageRows findInquiries(
             UUID storeId,
             MonthRange range,
@@ -389,6 +473,119 @@ public class CustomerManagementQueryRepository {
                     """);
             params.addValue("reasonType", condition.reasonType());
         }
+        appendManagementStageFilter(sql, params, condition.managementStage());
+    }
+
+    private void appendManagementStageFilter(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            String managementStage
+    ) {
+        if (managementStage == null) {
+            return;
+        }
+
+        switch (managementStage) {
+            case "ROUND_1" -> appendPendingRoundFilter(sql, params, 1);
+            case "ROUND_2" -> appendPendingRoundFilter(sql, params, 2);
+            case "ROUND_3" -> appendPendingRoundFilter(sql, params, 3);
+            case "COMPLETED" -> sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM follow_up pending_f
+                          WHERE pending_f.customer_id = c.id
+                            AND pending_f.status = 'PENDING'
+                      )
+                      AND (
+                          SELECT latest_f.status
+                          FROM follow_up latest_f
+                          WHERE latest_f.customer_id = c.id
+                          ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                          LIMIT 1
+                      ) = 'COMPLETED'
+                      AND (
+                          SELECT latest_f.contact_round
+                          FROM follow_up latest_f
+                          WHERE latest_f.customer_id = c.id
+                          ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                          LIMIT 1
+                      ) = 3
+                    """);
+            case "CLOSED" -> sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM follow_up pending_f
+                          WHERE pending_f.customer_id = c.id
+                            AND pending_f.status = 'PENDING'
+                      )
+                      AND (
+                          SELECT latest_f.status
+                          FROM follow_up latest_f
+                          WHERE latest_f.customer_id = c.id
+                          ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                          LIMIT 1
+                      ) = 'CLOSED'
+                    """);
+            case "NONE" -> sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM follow_up pending_f
+                          WHERE pending_f.customer_id = c.id
+                            AND pending_f.status = 'PENDING'
+                      )
+                      AND (
+                          NOT EXISTS (
+                              SELECT 1
+                              FROM follow_up any_f
+                              WHERE any_f.customer_id = c.id
+                          )
+                          OR NOT (
+                              (
+                                  SELECT latest_f.status
+                                  FROM follow_up latest_f
+                                  WHERE latest_f.customer_id = c.id
+                                  ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                                  LIMIT 1
+                              ) = 'CLOSED'
+                              OR (
+                                  (
+                                      SELECT latest_f.status
+                                      FROM follow_up latest_f
+                                      WHERE latest_f.customer_id = c.id
+                                      ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                                      LIMIT 1
+                                  ) = 'COMPLETED'
+                                  AND (
+                                      SELECT latest_f.contact_round
+                                      FROM follow_up latest_f
+                                      WHERE latest_f.customer_id = c.id
+                                      ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                                      LIMIT 1
+                                  ) = 3
+                              )
+                          )
+                      )
+                    """);
+            default -> {
+            }
+        }
+    }
+
+    private void appendPendingRoundFilter(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            int contactRound
+    ) {
+        sql.append("""
+                  AND EXISTS (
+                      SELECT 1
+                      FROM follow_up pending_f
+                      WHERE pending_f.customer_id = c.id
+                        AND pending_f.status = 'PENDING'
+                        AND pending_f.contact_round = :managementStageContactRound
+                  )
+                """);
+        params.addValue("managementStageContactRound", contactRound);
     }
 
     private void appendInquiryFilters(
@@ -469,6 +666,7 @@ public class CustomerManagementQueryRepository {
             String reasonType,
             String status,
             String leadTemperature,
+            String managementStage,
             UUID counselorId
     ) {
     }
@@ -502,6 +700,15 @@ public class CustomerManagementQueryRepository {
     public record NonConversionReasonRow(
             UUID customerId,
             String reasonType
+    ) {
+    }
+
+    public record FollowUpStageRow(
+            UUID customerId,
+            String status,
+            int contactRound,
+            OffsetDateTime updatedAt,
+            OffsetDateTime createdAt
     ) {
     }
 

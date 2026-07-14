@@ -14,6 +14,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationSearchCondition;
+import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.FollowUpStageRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InflowPathCountRow;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.InquiryRow;
@@ -23,6 +24,7 @@ import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.SummaryCounts;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator;
 import com.fitback.domain.customer.support.CustomerManagementQueryValidator.MonthRange;
+import com.fitback.domain.customer.support.FollowUpManagementStageAssembler;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
 import com.fitback.domain.user.repository.UserRepository;
@@ -48,6 +50,8 @@ public class CustomerManagementService {
     private static final int INQUIRY_MEMO_MAX_LENGTH = 100;
     private static final Set<String> LEAD_TEMPERATURES =
             Set.of("HOT", "WARM", "HOLD", "COLD", "LOST");
+    private static final Set<String> MANAGEMENT_STAGES =
+            Set.of("ROUND_1", "ROUND_2", "ROUND_3", "COMPLETED", "CLOSED", "NONE");
     private static final Map<String, String> REASON_DISPLAY_NAMES = Map.of(
             "PRICE_BURDEN", "이용료 부담",
             "SCHEDULE_CONFLICT", "일정 문제"
@@ -57,6 +61,7 @@ public class CustomerManagementService {
     private final ServiceRepository serviceRepository;
     private final InflowPathOptionRepository inflowPathOptionRepository;
     private final UserRepository userRepository;
+    private final FollowUpManagementStageAssembler followUpManagementStageAssembler;
 
     public CustomerManagementSummaryResponse getSummary(UUID storeId, String month) {
         if (storeId == null) {
@@ -109,10 +114,14 @@ public class CustomerManagementService {
 
         Map<UUID, List<CustomerManagementConsultationListResponse.NonConversionReasonInfo>> reasonsByCustomer =
                 findReasonsByCustomer(pageRows.content());
+        Map<UUID, FollowUpStageRow> activeFollowUpsByCustomer = findActiveFollowUpsByCustomer(pageRows.content());
+        Map<UUID, FollowUpStageRow> latestFollowUpsByCustomer = findLatestFollowUpsByCustomer(pageRows.content());
         List<CustomerManagementConsultationListResponse.ConsultationItem> content = pageRows.content().stream()
                 .map(row -> toConsultationItem(
                         row,
-                        reasonsByCustomer.getOrDefault(row.customerId(), List.of())
+                        reasonsByCustomer.getOrDefault(row.customerId(), List.of()),
+                        activeFollowUpsByCustomer.get(row.customerId()),
+                        latestFollowUpsByCustomer.get(row.customerId())
                 ))
                 .toList();
 
@@ -175,6 +184,7 @@ public class CustomerManagementService {
         if (leadTemperature != null && !LEAD_TEMPERATURES.contains(leadTemperature)) {
             throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
         }
+        String managementStage = validateManagementStage(query.getManagementStage());
         String reasonType = normalizeUppercase(query.getReasonType());
         if (reasonType != null && !reasonType.matches("[A-Z][A-Z0-9_]{0,49}")) {
             throw new BusinessException(CustomerManagementErrorCode.INVALID_FILTER_CONDITION);
@@ -190,6 +200,7 @@ public class CustomerManagementService {
                 reasonType,
                 status,
                 leadTemperature,
+                managementStage,
                 query.getCounselorId()
         );
     }
@@ -268,6 +279,17 @@ public class CustomerManagementService {
         return value.trim().toUpperCase(Locale.ROOT);
     }
 
+    private String validateManagementStage(String value) {
+        String normalized = normalizeUppercase(value);
+        if (normalized == null) {
+            return null;
+        }
+        if (!MANAGEMENT_STAGES.contains(normalized)) {
+            throw new BusinessException(CustomerManagementErrorCode.INVALID_MANAGEMENT_STAGE);
+        }
+        return normalized;
+    }
+
     private Map<UUID, List<CustomerManagementConsultationListResponse.NonConversionReasonInfo>>
     findReasonsByCustomer(List<ConsultationRow> rows) {
         if (rows.isEmpty()) {
@@ -286,9 +308,39 @@ public class CustomerManagementService {
                 ));
     }
 
+    private Map<UUID, FollowUpStageRow> findActiveFollowUpsByCustomer(List<ConsultationRow> rows) {
+        if (rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<UUID> customerIds = rows.stream()
+                .map(ConsultationRow::customerId)
+                .collect(Collectors.toSet());
+        return queryRepository.findPendingFollowUps(customerIds).stream()
+                .collect(Collectors.toMap(
+                        FollowUpStageRow::customerId,
+                        row -> row
+                ));
+    }
+
+    private Map<UUID, FollowUpStageRow> findLatestFollowUpsByCustomer(List<ConsultationRow> rows) {
+        if (rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<UUID> customerIds = rows.stream()
+                .map(ConsultationRow::customerId)
+                .collect(Collectors.toSet());
+        return queryRepository.findLatestFollowUps(customerIds).stream()
+                .collect(Collectors.toMap(
+                        FollowUpStageRow::customerId,
+                        row -> row
+                ));
+    }
+
     private CustomerManagementConsultationListResponse.ConsultationItem toConsultationItem(
             ConsultationRow row,
-            List<CustomerManagementConsultationListResponse.NonConversionReasonInfo> reasons
+            List<CustomerManagementConsultationListResponse.NonConversionReasonInfo> reasons,
+            FollowUpStageRow activeFollowUp,
+            FollowUpStageRow latestFollowUp
     ) {
         return CustomerManagementConsultationListResponse.ConsultationItem.builder()
                 .customerId(row.customerId())
@@ -301,6 +353,7 @@ public class CustomerManagementService {
                 .inflowPathId(row.inflowPathId())
                 .inflowPathName(row.inflowPathName())
                 .managementStage(ConsultationStage.valueOf(row.stage()))
+                .followUpManagementStage(followUpManagementStageAssembler.assemble(activeFollowUp, latestFollowUp))
                 .latestMemo(row.summary())
                 .nonConversionReasons(reasons)
                 .leadTemperature(row.leadTemperature())
