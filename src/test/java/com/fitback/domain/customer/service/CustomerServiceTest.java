@@ -13,6 +13,7 @@ import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
+import com.fitback.domain.customer.dto.request.FollowUpReplyUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateMarkSentRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
@@ -22,6 +23,7 @@ import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.FollowUpReplyUpdateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
@@ -400,6 +402,139 @@ class CustomerServiceTest {
     }
 
     @Test
+    @DisplayName("답장 있음으로 변경하면 hasReply를 true로 저장하고 repliedAt을 현재 시각으로 저장한다")
+    void updateFollowUpReplyTrue() {
+        UUID storeId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation consultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                user(UUID.randomUUID(), store, "문형주"),
+                service(UUID.randomUUID(), store, "PT"),
+                1,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(followUpId)
+                .customer(customer)
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(2)
+                .build();
+        FollowUpReplyUpdateRequest request = followUpReplyUpdateRequest(true);
+
+        when(followUpRepository.findByIdAndCustomer_Store_Id(followUpId, storeId))
+                .thenReturn(Optional.of(followUp));
+
+        FollowUpReplyUpdateResponse response = customerService.updateFollowUpReply(storeId, followUpId, request);
+
+        assertThat(response.getFollowUpId()).isEqualTo(followUpId);
+        assertThat(response.isHasReply()).isTrue();
+        assertThat(response.getRepliedAt()).isNotNull();
+        assertThat(followUp.isHasReply()).isTrue();
+        assertThat(followUp.getRepliedAt()).isNotNull();
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
+        verify(followUpRepository).findByIdAndCustomer_Store_Id(followUpId, storeId);
+        verifyNoInteractions(
+                customerRepository,
+                consultationRepository,
+                customerAiInsightRepository,
+                nonConversionReasonRepository,
+                followUpAiInsightRepository,
+                messageTemplateRepository,
+                customerActivityTimelineRepository,
+                aiConsultationClient,
+                aiMessageClient
+        );
+    }
+
+    @Test
+    @DisplayName("답장 없음으로 변경하면 hasReply를 false로 저장하고 repliedAt을 null로 저장한다")
+    void updateFollowUpReplyFalse() {
+        UUID storeId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation consultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                user(UUID.randomUUID(), store, "문형주"),
+                service(UUID.randomUUID(), store, "PT"),
+                1,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(followUpId)
+                .customer(customer)
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.COMPLETED)
+                .contactRound(3)
+                .hasReply(true)
+                .repliedAt(OffsetDateTime.parse("2026-07-10T15:30:00+09:00"))
+                .build();
+        FollowUpReplyUpdateRequest request = followUpReplyUpdateRequest(false);
+
+        when(followUpRepository.findByIdAndCustomer_Store_Id(followUpId, storeId))
+                .thenReturn(Optional.of(followUp));
+
+        FollowUpReplyUpdateResponse response = customerService.updateFollowUpReply(storeId, followUpId, request);
+
+        assertThat(response.getFollowUpId()).isEqualTo(followUpId);
+        assertThat(response.isHasReply()).isFalse();
+        assertThat(response.getRepliedAt()).isNull();
+        assertThat(followUp.isHasReply()).isFalse();
+        assertThat(followUp.getRepliedAt()).isNull();
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(followUp.getContactRound()).isEqualTo(3);
+        verify(followUpRepository).findByIdAndCustomer_Store_Id(followUpId, storeId);
+        verifyNoInteractions(
+                customerRepository,
+                consultationRepository,
+                customerAiInsightRepository,
+                nonConversionReasonRepository,
+                followUpAiInsightRepository,
+                messageTemplateRepository,
+                customerActivityTimelineRepository,
+                aiConsultationClient,
+                aiMessageClient
+        );
+    }
+
+    @Test
+    @DisplayName("다른 매장 follow_up 답장 유무 변경은 FOLLOW_UP_NOT_FOUND 예외가 발생한다")
+    void updateFollowUpReplyOtherStoreNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID followUpId = UUID.randomUUID();
+        FollowUpReplyUpdateRequest request = followUpReplyUpdateRequest(true);
+
+        when(followUpRepository.findByIdAndCustomer_Store_Id(followUpId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerService.updateFollowUpReply(storeId, followUpId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_NOT_FOUND);
+
+        verify(followUpRepository).findByIdAndCustomer_Store_Id(followUpId, storeId);
+        verifyNoInteractions(
+                customerRepository,
+                consultationRepository,
+                customerAiInsightRepository,
+                nonConversionReasonRepository,
+                followUpAiInsightRepository,
+                messageTemplateRepository,
+                customerActivityTimelineRepository,
+                aiConsultationClient,
+                aiMessageClient
+        );
+    }
+
+    @Test
     @DisplayName("메시지 초안 생성은 PENDING follow_up 기준으로 AI 메시지를 생성하고 DRAFT 상태로 저장한다")
     void createMessageTemplate() {
         UUID storeId = UUID.randomUUID();
@@ -426,6 +561,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .memo("부담 적은 시작 옵션 안내")
                 .build();
         FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
@@ -479,6 +615,7 @@ class CustomerServiceTest {
                 .versionType(MessageVersionType.STANDARD.name())
                 .tonePreset(MessageTonePreset.FRIENDLY.name())
                 .deliveryStatus("DRAFT")
+                .contactRound(2)
                 .generatedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
                 .updatedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
                 .build();
@@ -528,6 +665,7 @@ class CustomerServiceTest {
                 messageTemplate.getCustomer() == customer
                         && messageTemplate.getFollowUp() == followUp
                         && eventId.equals(messageTemplate.getEventId())
+                        && Integer.valueOf(2).equals(messageTemplate.getContactRound())
                         && messageTemplate.getScheduledAt() == null
                         && "DRAFT".equals(messageTemplate.getDeliveryStatus())
                         && MessageTonePreset.FRIENDLY.name().equals(messageTemplate.getTonePreset())
@@ -742,6 +880,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .build();
         MessageTemplate messageTemplate = messageTemplate(
                 messageTemplateId,
@@ -751,7 +890,8 @@ class CustomerServiceTest {
         );
         MessageTemplateMarkSentRequest request = messageTemplateMarkSentRequest(sentAt);
 
-        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.of(messageTemplate));
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
         when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
 
         MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
@@ -766,9 +906,11 @@ class CustomerServiceTest {
         assertThat(response.getSentAt()).isEqualTo(sentAt);
         assertThat(response.getFollowUpId()).isEqualTo(followUp.getId());
         assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(response.getContactRound()).isEqualTo(2);
         assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
         assertThat(messageTemplate.getSentAt()).isEqualTo(sentAt);
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
 
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.MESSAGE_SENT
@@ -790,13 +932,107 @@ class CustomerServiceTest {
     }
 
     @Test
+    @DisplayName("등록 완료 고객 메시지 전송 완료는 연결된 follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    void markMessageTemplateSentRegisteredCustomerClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        OffsetDateTime sentAt = OffsetDateTime.parse("2026-07-08T15:20:00+09:00");
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        customer.markRegistered(service, OffsetDateTime.parse("2026-07-08T10:00:00+09:00"));
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(3)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(sentAt)
+        );
+
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(response.getContactRound()).isEqualTo(3);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(3);
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
+        verify(customerActivityTimelineRepository).save(any(CustomerActivityTimeline.class));
+        verifyNoInteractions(aiConsultationClient, aiMessageClient, followUpRepository);
+    }
+
+    @Test
+    @DisplayName("이탈 고객 메시지 전송 완료는 연결된 follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    void markMessageTemplateSentLostCustomerClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        customer.markStatus(CustomerStatus.LOST);
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, actorUser, service, 2, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(2)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        );
+
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(response.getContactRound()).isEqualTo(2);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
+        verifyNoInteractions(aiConsultationClient, aiMessageClient, followUpRepository);
+    }
+
+    @Test
     @DisplayName("메시지 전송 완료 시 메시지 초안이 없으면 MESSAGE_TEMPLATE_NOT_FOUND 예외가 발생한다")
     void markMessageTemplateSentMessageNotFound() {
         UUID storeId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         UUID messageTemplateId = UUID.randomUUID();
 
-        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.empty());
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> customerService.markMessageTemplateSent(
                 storeId,
@@ -809,6 +1045,64 @@ class CustomerServiceTest {
                 .isEqualTo(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND);
 
         verifyNoInteractions(userRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("다른 매장 메시지 전송 완료 접근은 MESSAGE_TEMPLATE_NOT_FOUND 예외가 발생한다")
+    void markMessageTemplateSentOtherStoreMessageNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND);
+
+        verify(messageTemplateRepository).findByIdAndCustomer_Store_Id(messageTemplateId, storeId);
+        verifyNoInteractions(userRepository, customerActivityTimelineRepository);
+    }
+
+    @Test
+    @DisplayName("메시지 전송 완료 시 연결된 follow_up이 없으면 FOLLOW_UP_NOT_FOUND 예외가 발생한다")
+    void markMessageTemplateSentFollowUpNotFound() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        Store store = store(storeId);
+        User actorUser = user(userId, store, "문형주");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                null,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        assertThatThrownBy(() -> customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(OffsetDateTime.parse("2026-07-08T15:20:00+09:00"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_NOT_FOUND);
+
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("DRAFT");
+        verify(customerActivityTimelineRepository, never()).save(any(CustomerActivityTimeline.class));
     }
 
     @Test
@@ -836,7 +1130,8 @@ class CustomerServiceTest {
                 OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
         );
 
-        when(messageTemplateRepository.findById(messageTemplateId)).thenReturn(Optional.of(messageTemplate));
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
         when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
 
         assertThatThrownBy(() -> customerService.markMessageTemplateSent(
@@ -1285,6 +1580,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 8))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .build();
         FollowUp savedFollowUp = FollowUp.builder()
                 .id(newFollowUpId)
@@ -1292,6 +1588,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .memo("새 액션")
                 .build();
         AiNextActionRegenerateResponse aiResponse = nextActionAiResponse();
@@ -1302,6 +1599,8 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of(reason));
+        when(followUpRepository.findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId))
+                .thenReturn(Optional.of(oldFollowUp));
         when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class))).thenReturn(aiResponse);
         when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
                 .thenReturn(Optional.of(oldFollowUp));
@@ -1318,6 +1617,7 @@ class CustomerServiceTest {
         assertThat(response.getOldFollowUpStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
         assertThat(response.getNewFollowUpId()).isEqualTo(newFollowUpId);
         assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        assertThat(response.getContactRound()).isEqualTo(2);
         assertThat(response.getRecommendContactDate()).isEqualTo(LocalDate.of(2026, 7, 10));
         assertThat(response.getPriorityScore()).isEqualTo(82);
         assertThat(oldFollowUp.getStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
@@ -1336,6 +1636,7 @@ class CustomerServiceTest {
                 followUp.getCustomer() == customer
                         && followUp.getConsultation() == latestConsultation
                         && followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 2
                         && LocalDate.of(2026, 7, 10).equals(followUp.getRecommendContactDate())
         ));
         verify(followUpAiInsightRepository).save(argThat(insight ->
@@ -1351,6 +1652,62 @@ class CustomerServiceTest {
                         && FollowUpStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
                         && FollowUpStatus.PENDING.equals(timeline.getAfterValue().get("status"))
         ));
+    }
+
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최근 1차 COMPLETED follow_up 이후 2차 PENDING을 생성한다")
+    void regenerateNextActionCreatesSecondRoundAfterFirstCompleted() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 1, null, 2);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(2);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 2
+        ));
+    }
+
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최근 2차 COMPLETED follow_up 이후 3차 PENDING을 생성한다")
+    void regenerateNextActionCreatesThirdRoundAfterSecondCompleted() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 2, null, 3);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(3);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 3
+        ));
+    }
+
+    @Test
+    @DisplayName("다음 최적 액션 재생성은 최근 3차 COMPLETED follow_up 이후 FOLLOW_UP_ROUND_LIMIT_EXCEEDED 예외가 발생한다")
+    void regenerateNextActionRoundLimitExceededAfterThirdCompleted() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 3, null, 3);
+
+        assertThatThrownBy(() -> customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CustomerErrorCode.FOLLOW_UP_ROUND_LIMIT_EXCEEDED);
+
+        verifyNoInteractions(aiConsultationClient);
+        verify(followUpRepository, never()).save(any(FollowUp.class));
     }
 
     @Test
@@ -1378,6 +1735,7 @@ class CustomerServiceTest {
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 10))
                 .status(FollowUpStatus.PENDING)
+                .contactRound(2)
                 .build();
         CustomerStatusUpdateRequest request = customerStatusUpdateRequest(CustomerStatus.REGISTERED, registeredServiceId);
 
@@ -1399,6 +1757,7 @@ class CustomerServiceTest {
         assertThat(customer.getRegisteredService()).isEqualTo(registeredService);
         assertThat(customer.getRegisteredAt()).isNotNull();
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(2);
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
                         && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
@@ -1408,6 +1767,59 @@ class CustomerServiceTest {
                         && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
         ));
         verifyNoInteractions(customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+    }
+
+    @Test
+    @DisplayName("고객 상태를 LOST로 변경하면 기존 PENDING follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    void updateCustomerStatusLostClosesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(3)
+                .build();
+        CustomerStatusUpdateRequest request = customerStatusUpdateRequest(CustomerStatus.LOST, null);
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(followUp));
+
+        CustomerStatusUpdateResponse response = customerService.updateCustomerStatus(storeId, customerId, request);
+
+        assertThat(response.getCustomerId()).isEqualTo(customerId);
+        assertThat(response.getStatus()).isEqualTo(CustomerStatus.LOST);
+        assertThat(response.getFollowUpAction()).isEqualTo("CLOSED");
+        assertThat(response.isNextActionRegenerationAvailable()).isFalse();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.LOST);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        assertThat(followUp.getContactRound()).isEqualTo(3);
+        verify(customerActivityTimelineRepository).save(argThat(timeline ->
+                timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
+                        && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
+                        && customerId.equals(timeline.getRelatedId())
+                        && CustomerStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
+                        && CustomerStatus.LOST.equals(timeline.getAfterValue().get("status"))
+                        && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
+        ));
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
     }
 
     @Test
@@ -1580,6 +1992,12 @@ class CustomerServiceTest {
         return request;
     }
 
+    private FollowUpReplyUpdateRequest followUpReplyUpdateRequest(boolean hasReply) {
+        FollowUpReplyUpdateRequest request = new FollowUpReplyUpdateRequest();
+        ReflectionTestUtils.setField(request, "hasReply", hasReply);
+        return request;
+    }
+
     private CustomerActivityTimeline timeline(
             UUID timelineId,
             Store store,
@@ -1660,6 +2078,86 @@ class CustomerServiceTest {
                         .actionBasis(Map.of("reason", "일정 조율이 주요 이탈 요인"))
                         .build())
                 .build();
+    }
+
+    private RegenerateContext prepareRegenerateContext(
+            FollowUpStatus latestStatus,
+            int latestRound,
+            Integer pendingRound,
+            int savedRound
+    ) {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID savedFollowUpId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        CustomerAiInsight aiInsight = CustomerAiInsight.builder()
+                .customer(customer)
+                .leadTemperature("HOT")
+                .temperatureBasis("수정된 온도 근거")
+                .priorityScore(70)
+                .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
+                .build();
+        FollowUp latestFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 8))
+                .status(latestStatus)
+                .contactRound(latestRound)
+                .build();
+        FollowUp pendingFollowUp = pendingRound == null
+                ? null
+                : FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 8))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(pendingRound)
+                .build();
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(savedFollowUpId)
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(savedRound)
+                .memo("새 액션")
+                .build();
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of());
+        when(followUpRepository.findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId))
+                .thenReturn(Optional.of(latestFollowUp));
+
+        boolean roundLimitExceeded = latestStatus == FollowUpStatus.COMPLETED && latestRound >= 3;
+        if (!roundLimitExceeded) {
+            when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class)))
+                    .thenReturn(nextActionAiResponse());
+            when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                    .thenReturn(Optional.ofNullable(pendingFollowUp));
+            when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+        }
+
+        return new RegenerateContext(storeId, customerId);
+    }
+
+    private record RegenerateContext(UUID storeId, UUID customerId) {
     }
 
     private CustomerStatusUpdateRequest customerStatusUpdateRequest(

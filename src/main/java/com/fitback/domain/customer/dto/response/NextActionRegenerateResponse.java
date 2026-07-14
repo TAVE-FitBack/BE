@@ -18,6 +18,7 @@ public class NextActionRegenerateResponse {
     private FollowUpStatus oldFollowUpStatus;
     private UUID newFollowUpId;
     private FollowUpStatus newFollowUpStatus;
+    private int contactRound;
     private LocalDate recommendContactDate;
     private Integer priorityScore;
 }

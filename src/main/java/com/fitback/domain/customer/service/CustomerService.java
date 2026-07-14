@@ -15,6 +15,7 @@ import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
+import com.fitback.domain.customer.dto.request.FollowUpReplyUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateMarkSentRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
@@ -24,6 +25,7 @@ import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
+import com.fitback.domain.customer.dto.response.FollowUpReplyUpdateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateOptionsResponse;
@@ -168,6 +170,32 @@ public class CustomerService {
     }
 
     @Transactional
+    public FollowUpReplyUpdateResponse updateFollowUpReply(
+            UUID storeId,
+            UUID followUpId,
+            FollowUpReplyUpdateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        FollowUp followUp = followUpRepository.findByIdAndCustomer_Store_Id(followUpId, storeId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_FOUND));
+
+        boolean hasReply = Boolean.TRUE.equals(request.getHasReply());
+        OffsetDateTime repliedAt = hasReply
+                ? OffsetDateTime.now()
+                : null;
+        followUp.updateReply(hasReply, repliedAt);
+
+        return FollowUpReplyUpdateResponse.builder()
+                .followUpId(followUp.getId())
+                .hasReply(followUp.isHasReply())
+                .repliedAt(followUp.getRepliedAt())
+                .build();
+    }
+
+    @Transactional
     public MessageTemplateCreateResponse createMessageTemplate(
             UUID storeId,
             UUID userId,
@@ -235,6 +263,7 @@ public class CustomerService {
                 .versionType(request.getVersionType().name())
                 .tonePreset(request.getTonePreset().name())
                 .deliveryStatus(MessageDeliveryStatus.DRAFT.name())
+                .contactRound(followUp.getContactRound())
                 .scheduledAt(null)
                 .generatedAt(now)
                 .updatedAt(now)
@@ -265,20 +294,17 @@ public class CustomerService {
             throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
         }
 
-        MessageTemplate messageTemplate = messageTemplateRepository.findById(messageTemplateId)
+        MessageTemplate messageTemplate = messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId)
                 .orElseThrow(() -> new BusinessException(CustomerErrorCode.MESSAGE_TEMPLATE_NOT_FOUND));
 
         Customer customer = messageTemplate.getCustomer();
-        if (!storeId.equals(customer.getStore().getId())) {
-            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
-        }
 
         User actorUser = userRepository.findByIdAndStore_Id(userId, storeId)
                 .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
 
         FollowUp followUp = messageTemplate.getFollowUp();
         if (followUp == null) {
-            throw new BusinessException(CustomerErrorCode.ACTIVE_FOLLOW_UP_NOT_FOUND);
+            throw new BusinessException(CustomerErrorCode.FOLLOW_UP_NOT_FOUND);
         }
 
         if (followUp.getStatus() != FollowUpStatus.PENDING) {
@@ -291,7 +317,11 @@ public class CustomerService {
         String beforeDeliveryStatus = messageTemplate.getDeliveryStatus();
 
         messageTemplate.markSent(sentAt);
-        followUp.markCompleted();
+        if (customer.getStatus() == CustomerStatus.REGISTERED || customer.getStatus() == CustomerStatus.LOST) {
+            followUp.markClosed();
+        } else {
+            followUp.markCompleted();
+        }
         saveMessageSentTimeline(customer, actorUser, messageTemplate, beforeDeliveryStatus);
 
         return MessageTemplateMarkSentResponse.builder()
@@ -300,6 +330,7 @@ public class CustomerService {
                 .sentAt(messageTemplate.getSentAt())
                 .followUpId(followUp.getId())
                 .followUpStatus(followUp.getStatus())
+                .contactRound(followUp.getContactRound())
                 .build();
     }
 
@@ -482,6 +513,11 @@ public class CustomerService {
         List<NonConversionReason> reasons = nonConversionReasonRepository
                 .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
 
+        FollowUp latestFollowUp = followUpRepository
+                .findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId)
+                .orElse(null);
+        int nextContactRound = resolveNextContactRound(latestFollowUp);
+
         AiNextActionRegenerateResponse aiResponse = aiConsultationClient.regenerateNextAction(
                 buildNextActionAiRequest(customer, latestConsultation, customerAiInsight, reasons)
         );
@@ -501,6 +537,7 @@ public class CustomerService {
                 .consultation(latestConsultation)
                 .recommendContactDate(aiResponse.getFollowUp().getRecommendContactDate())
                 .status(FollowUpStatus.PENDING)
+                .contactRound(nextContactRound)
                 .memo(resolveNextActionMemo(aiResponse))
                 .build();
         FollowUp savedFollowUp = followUpRepository.save(newFollowUp);
@@ -516,6 +553,7 @@ public class CustomerService {
                 .oldFollowUpStatus(oldFollowUp != null ? oldFollowUp.getStatus() : null)
                 .newFollowUpId(savedFollowUp.getId())
                 .newFollowUpStatus(savedFollowUp.getStatus())
+                .contactRound(savedFollowUp.getContactRound())
                 .recommendContactDate(savedFollowUp.getRecommendContactDate())
                 .priorityScore(aiResponse.getPriorityScore())
                 .build();
@@ -930,10 +968,25 @@ public class CustomerService {
         };
     }
 
+    private int resolveNextContactRound(FollowUp latestFollowUp) {
+        if (latestFollowUp == null) {
+            return 1;
+        }
+        int currentRound = latestFollowUp.getContactRound();
+        if (latestFollowUp.getStatus() == FollowUpStatus.COMPLETED) {
+            if (currentRound >= 3) {
+                throw new BusinessException(CustomerErrorCode.FOLLOW_UP_ROUND_LIMIT_EXCEEDED);
+            }
+            return currentRound + 1;
+        }
+        return currentRound;
+    }
+
     private Map<String, Object> buildFollowUpTimelineValue(FollowUp followUp, String nextActionTitle) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("followUpId", followUp.getId());
         value.put("status", followUp.getStatus());
+        value.put("contactRound", followUp.getContactRound());
         value.put("recommendContactDate", followUp.getRecommendContactDate());
         value.put("nextActionTitle", nextActionTitle);
         return value;

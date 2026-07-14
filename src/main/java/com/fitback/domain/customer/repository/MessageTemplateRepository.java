@@ -8,5 +8,7 @@ import java.util.UUID;
 
 public interface MessageTemplateRepository extends JpaRepository<MessageTemplate, UUID> {
 
+    Optional<MessageTemplate> findByIdAndCustomer_Store_Id(UUID id, UUID storeId);
+
     Optional<MessageTemplate> findFirstByCustomerIdAndFollowUpIdOrderByGeneratedAtDesc(UUID customerId, UUID followUpId);
 }

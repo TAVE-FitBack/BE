@@ -21,6 +21,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Builder
@@ -51,6 +52,17 @@ public class FollowUp extends BaseTimeEntity {
     @Column(nullable = false, length = 30)
     private FollowUpStatus status;
 
+    @Builder.Default
+    @Column(name = "contact_round", nullable = false)
+    private int contactRound = 1;
+
+    @Builder.Default
+    @Column(name = "has_reply", nullable = false)
+    private boolean hasReply = false;
+
+    @Column(name = "replied_at")
+    private OffsetDateTime repliedAt;
+
     @Column(name = "snoozed_until")
     private LocalDate snoozedUntil;
 
@@ -67,5 +79,28 @@ public class FollowUp extends BaseTimeEntity {
 
     public void markCompleted() {
         this.status = FollowUpStatus.COMPLETED;
+    }
+
+    public void changeContactRound(int contactRound) {
+        validateContactRound(contactRound);
+        this.contactRound = contactRound;
+    }
+
+    public void updateReply(boolean hasReply, OffsetDateTime repliedAt) {
+        this.hasReply = hasReply;
+        this.repliedAt = hasReply ? requireRepliedAt(repliedAt) : null;
+    }
+
+    public static void validateContactRound(int contactRound) {
+        if (contactRound < 1 || contactRound > 3) {
+            throw new IllegalArgumentException("contactRound must be between 1 and 3.");
+        }
+    }
+
+    private OffsetDateTime requireRepliedAt(OffsetDateTime repliedAt) {
+        if (repliedAt == null) {
+            throw new IllegalArgumentException("repliedAt is required when hasReply is true.");
+        }
+        return repliedAt;
     }
 }
