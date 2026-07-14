@@ -460,6 +460,119 @@ public class CustomerManagementQueryRepository {
                     """);
             params.addValue("reasonType", condition.reasonType());
         }
+        appendManagementStageFilter(sql, params, condition.managementStage());
+    }
+
+    private void appendManagementStageFilter(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            String managementStage
+    ) {
+        if (managementStage == null) {
+            return;
+        }
+
+        switch (managementStage) {
+            case "ROUND_1" -> appendPendingRoundFilter(sql, params, 1);
+            case "ROUND_2" -> appendPendingRoundFilter(sql, params, 2);
+            case "ROUND_3" -> appendPendingRoundFilter(sql, params, 3);
+            case "COMPLETED" -> sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM follow_up pending_f
+                          WHERE pending_f.customer_id = c.id
+                            AND pending_f.status = 'PENDING'
+                      )
+                      AND (
+                          SELECT latest_f.status
+                          FROM follow_up latest_f
+                          WHERE latest_f.customer_id = c.id
+                          ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                          LIMIT 1
+                      ) = 'COMPLETED'
+                      AND (
+                          SELECT latest_f.contact_round
+                          FROM follow_up latest_f
+                          WHERE latest_f.customer_id = c.id
+                          ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                          LIMIT 1
+                      ) = 3
+                    """);
+            case "CLOSED" -> sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM follow_up pending_f
+                          WHERE pending_f.customer_id = c.id
+                            AND pending_f.status = 'PENDING'
+                      )
+                      AND (
+                          SELECT latest_f.status
+                          FROM follow_up latest_f
+                          WHERE latest_f.customer_id = c.id
+                          ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                          LIMIT 1
+                      ) = 'CLOSED'
+                    """);
+            case "NONE" -> sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM follow_up pending_f
+                          WHERE pending_f.customer_id = c.id
+                            AND pending_f.status = 'PENDING'
+                      )
+                      AND (
+                          NOT EXISTS (
+                              SELECT 1
+                              FROM follow_up any_f
+                              WHERE any_f.customer_id = c.id
+                          )
+                          OR NOT (
+                              (
+                                  SELECT latest_f.status
+                                  FROM follow_up latest_f
+                                  WHERE latest_f.customer_id = c.id
+                                  ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                                  LIMIT 1
+                              ) = 'CLOSED'
+                              OR (
+                                  (
+                                      SELECT latest_f.status
+                                      FROM follow_up latest_f
+                                      WHERE latest_f.customer_id = c.id
+                                      ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                                      LIMIT 1
+                                  ) = 'COMPLETED'
+                                  AND (
+                                      SELECT latest_f.contact_round
+                                      FROM follow_up latest_f
+                                      WHERE latest_f.customer_id = c.id
+                                      ORDER BY latest_f.updated_at DESC, latest_f.created_at DESC, latest_f.id DESC
+                                      LIMIT 1
+                                  ) = 3
+                              )
+                          )
+                      )
+                    """);
+            default -> {
+            }
+        }
+    }
+
+    private void appendPendingRoundFilter(
+            StringBuilder sql,
+            MapSqlParameterSource params,
+            int contactRound
+    ) {
+        sql.append("""
+                  AND EXISTS (
+                      SELECT 1
+                      FROM follow_up pending_f
+                      WHERE pending_f.customer_id = c.id
+                        AND pending_f.status = 'PENDING'
+                        AND pending_f.contact_round = :managementStageContactRound
+                  )
+                """);
+        params.addValue("managementStageContactRound", contactRound);
     }
 
     private void appendInquiryFilters(

@@ -243,6 +243,66 @@ class CustomerManagementQueryRepositoryIntegrationTest {
                 .isEqualTo(customerId);
     }
 
+    @Test
+    @DisplayName("managementStage ROUND 필터를 PostgreSQL 조회 조건에 적용한다")
+    void applyRoundManagementStageFilter() {
+        ConsultationSearchCondition roundOne = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "ROUND_1", null
+        );
+        ConsultationSearchCondition roundTwo = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "ROUND_2", null
+        );
+
+        ConsultationPageRows roundOneResult = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                roundOne,
+                0,
+                10
+        );
+        ConsultationPageRows roundTwoResult = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                roundTwo,
+                0,
+                10
+        );
+
+        assertThat(roundOneResult.totalElements()).isEqualTo(1);
+        assertThat(roundOneResult.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+        assertThat(roundTwoResult.totalElements()).isZero();
+        assertThat(roundTwoResult.content()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("managementStage COMPLETED 필터를 PostgreSQL 조회 조건에 적용한다")
+    void applyCompletedManagementStageFilter() {
+        jdbcTemplate.update("""
+                UPDATE follow_up
+                SET status = 'COMPLETED',
+                    contact_round = 3
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "COMPLETED", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
     private void insertService(UUID serviceId, String name, OffsetDateTime now) {
         jdbcTemplate.update("""
                 INSERT INTO service (
