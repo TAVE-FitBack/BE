@@ -303,6 +303,85 @@ class CustomerManagementQueryRepositoryIntegrationTest {
                 .isEqualTo(customerId);
     }
 
+    @Test
+    @DisplayName("managementStage CLOSED filter applies PostgreSQL follow_up condition")
+    void applyClosedManagementStageFilter() {
+        jdbcTemplate.update("""
+                UPDATE follow_up
+                SET status = 'CLOSED',
+                    contact_round = 2
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "CLOSED", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
+    @Test
+    @DisplayName("managementStage NONE filter includes customers without follow_up")
+    void applyNoneManagementStageFilterWithoutFollowUp() {
+        jdbcTemplate.update("""
+                DELETE FROM follow_up
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "NONE", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
+    @Test
+    @DisplayName("managementStage NONE filter includes non-terminal latest follow_up")
+    void applyNoneManagementStageFilterWithNonTerminalLatestFollowUp() {
+        jdbcTemplate.update("""
+                UPDATE follow_up
+                SET status = 'COMPLETED',
+                    contact_round = 2
+                WHERE customer_id = ?
+                """, customerId);
+        ConsultationSearchCondition condition = new ConsultationSearchCondition(
+                null, null, null, null, null, null, null, null, "NONE", null
+        );
+
+        ConsultationPageRows result = queryRepository.findConsultations(
+                storeId,
+                CustomerManagementQueryValidator.resolveMonthRange("2026-10"),
+                condition,
+                0,
+                10
+        );
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.content()).singleElement()
+                .extracting(CustomerManagementQueryRepository.ConsultationRow::customerId)
+                .isEqualTo(customerId);
+    }
+
     private void insertService(UUID serviceId, String name, OffsetDateTime now) {
         jdbcTemplate.update("""
                 INSERT INTO service (

@@ -270,10 +270,23 @@ public class CustomerManagementQueryRepository {
                        contact_round,
                        updated_at,
                        created_at
-                FROM follow_up
-                WHERE customer_id IN (:customerIds)
-                  AND status = 'PENDING'
-                ORDER BY customer_id, updated_at DESC, created_at DESC, id DESC
+                FROM (
+                    SELECT f.customer_id,
+                           f.id,
+                           f.status,
+                           f.contact_round,
+                           f.updated_at,
+                           f.created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.customer_id
+                               ORDER BY f.updated_at DESC, f.created_at DESC, f.id DESC
+                           ) AS row_number
+                    FROM follow_up f
+                    WHERE f.customer_id IN (:customerIds)
+                      AND f.status = 'PENDING'
+                ) ranked_follow_up
+                WHERE row_number = 1
+                ORDER BY customer_id
                 """;
 
         return jdbcTemplate.query(
