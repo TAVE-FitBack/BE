@@ -35,6 +35,7 @@ public class CustomerManagementConsultationListResponse {
         private UUID inflowPathId;
         private String inflowPathName;
         private ConsultationStage managementStage;
+        private FollowUpManagementStageResponse followUpManagementStage;
         private String latestMemo;
         private List<NonConversionReasonInfo> nonConversionReasons;
         private String leadTemperature;
@@ -42,6 +43,21 @@ public class CustomerManagementConsultationListResponse {
         private OffsetDateTime latestConsultAt;
         private UUID counselorId;
         private String counselorName;
+    }
+
+    @Getter
+    @Builder
+    public static class FollowUpManagementStageResponse {
+        private FollowUpManagementStageType type;
+        private Integer contactRound;
+        private String label;
+    }
+
+    public enum FollowUpManagementStageType {
+        ROUND,
+        COMPLETED,
+        CLOSED,
+        NONE
     }
 
     @Getter
