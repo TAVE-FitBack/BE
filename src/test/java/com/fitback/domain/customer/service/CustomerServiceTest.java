@@ -5,6 +5,7 @@ import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest
 import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
@@ -38,6 +39,7 @@ import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.MessageTemplate;
 import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
@@ -134,6 +136,9 @@ class CustomerServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private FollowUpConversionService followUpConversionService;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -152,7 +157,8 @@ class CustomerServiceTest {
                 aiConsultationClient,
                 aiMessageClient,
                 userRepository,
-                eventPublisher
+                eventPublisher,
+                followUpConversionService
         );
     }
 
@@ -1441,6 +1447,10 @@ class CustomerServiceTest {
                     .stage(unsaved.getStage())
                     .sourceType(unsaved.getSourceType())
                     .rawText(unsaved.getRawText())
+                    .visitPurpose(unsaved.getVisitPurpose())
+                    .experienceNote(unsaved.getExperienceNote())
+                    .positiveSignal(unsaved.getPositiveSignal())
+                    .extraNote(unsaved.getExtraNote())
                     .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
                     .build();
         });
@@ -1450,8 +1460,12 @@ class CustomerServiceTest {
         assertThat(response.getCustomerId()).isEqualTo(customerId);
         assertThat(response.getConsultationId()).isEqualTo(newConsultationId);
         assertThat(response.getSessionNo()).isEqualTo(3);
+        assertThat(response.getRegistrationStatus()).isEqualTo(ConsultationRegistrationStatus.PENDING);
+        assertThat(response.getFollowUpAction()).isEqualTo("KEEP");
+        assertThat(response.isFollowUpConversionCreated()).isFalse();
         assertThat(response.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.PROCESSING);
         assertThat(customer.getLatestConsultAt()).isEqualTo(LocalDate.of(2026, 7, 8));
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.PENDING);
         verify(consultationRepository).save(argThat(consultation ->
                 consultation.getCustomer() == customer
                         && consultation.getUser() == counselor
@@ -1460,6 +1474,10 @@ class CustomerServiceTest {
                         && consultation.getStage() == ConsultationStage.CONSULTATION
                         && consultation.getSourceType() == ConsultationSourceType.DIRECT
                         && "재상담 원문".equals(consultation.getRawText())
+                        && "체중 감량".equals(consultation.getVisitPurpose())
+                        && "PT 경험 없음".equals(consultation.getExperienceNote())
+                        && "단기권 관심".equals(consultation.getPositiveSignal())
+                        && "가격 안내 필요".equals(consultation.getExtraNote())
                         && consultation.getAiAnalysisStatus() == AiAnalysisStatus.PROCESSING
         ));
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
@@ -1470,6 +1488,122 @@ class CustomerServiceTest {
                         && newConsultationId.equals(timeline.getRelatedId())
         ));
         verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(newConsultationId));
+        verifyNoInteractions(followUpConversionService);
+    }
+
+    @Test
+    @DisplayName("재상담 등록에서 REGISTERED를 선택하면 고객 등록 처리, PENDING follow_up 종료, 전환 귀속 저장을 함께 수행한다")
+    void createReconsultationRegisteredClosesFollowUpAndRecordsConversion() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-07-08T15:00:00+09:00");
+        Store store = store(storeId);
+        Service service = service(serviceId, store, "PT");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        User counselor = user(counselorId, store, "문형주");
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, counselor, service, 1, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 9))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(2)
+                .build();
+        ReconsultationCreateRequest request = reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                consultedAt,
+                "재상담 원문",
+                ConsultationRegistrationStatus.REGISTERED,
+                serviceId
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId)).thenReturn(Optional.of(counselor));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId)).thenReturn(Optional.of(latestConsultation));
+        when(consultationRepository.save(any(Consultation.class))).thenAnswer(invocation -> {
+            Consultation unsaved = invocation.getArgument(0);
+            return Consultation.builder()
+                    .id(consultationId)
+                    .customer(unsaved.getCustomer())
+                    .user(unsaved.getUser())
+                    .consultedService(unsaved.getConsultedService())
+                    .consultedAt(unsaved.getConsultedAt())
+                    .sessionNo(unsaved.getSessionNo())
+                    .stage(unsaved.getStage())
+                    .sourceType(unsaved.getSourceType())
+                    .rawText(unsaved.getRawText())
+                    .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
+                    .build();
+        });
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(followUp));
+        when(followUpConversionService.recordConversionIfAbsent(customer, consultedAt, ConversionSource.RECONSULTATION))
+                .thenReturn(true);
+
+        ReconsultationCreateResponse response = customerService.createReconsultation(storeId, customerId, request);
+
+        assertThat(response.getRegistrationStatus()).isEqualTo(ConsultationRegistrationStatus.REGISTERED);
+        assertThat(response.getRegisteredServiceId()).isEqualTo(serviceId);
+        assertThat(response.getFollowUpAction()).isEqualTo("CLOSED");
+        assertThat(response.isFollowUpConversionCreated()).isTrue();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.REGISTERED);
+        assertThat(customer.getRegisteredService()).isEqualTo(service);
+        assertThat(customer.getRegisteredAt()).isEqualTo(consultedAt);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        verify(followUpConversionService).recordConversionIfAbsent(customer, consultedAt, ConversionSource.RECONSULTATION);
+    }
+
+    @Test
+    @DisplayName("재상담 등록에서 LOST를 선택하면 PENDING follow_up을 CLOSED 처리하고 전환 귀속은 저장하지 않는다")
+    void createReconsultationLostClosesFollowUpWithoutConversion() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(serviceId, store, "PT");
+        Customer customer = customer(customerId, store, null, inflowPathOption(UUID.randomUUID(), store));
+        User counselor = user(counselorId, store, "문형주");
+        Consultation latestConsultation = consultation(UUID.randomUUID(), customer, counselor, service, 1, AiAnalysisStatus.COMPLETED);
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 9))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(2)
+                .build();
+        ReconsultationCreateRequest request = reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00"),
+                "재상담 원문",
+                ConsultationRegistrationStatus.LOST,
+                null
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId)).thenReturn(Optional.of(counselor));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId)).thenReturn(Optional.of(latestConsultation));
+        when(consultationRepository.save(any(Consultation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.of(followUp));
+
+        ReconsultationCreateResponse response = customerService.createReconsultation(storeId, customerId, request);
+
+        assertThat(response.getRegistrationStatus()).isEqualTo(ConsultationRegistrationStatus.LOST);
+        assertThat(response.getFollowUpAction()).isEqualTo("CLOSED");
+        assertThat(response.isFollowUpConversionCreated()).isFalse();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.LOST);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
+        verifyNoInteractions(followUpConversionService);
     }
 
     @Test
@@ -1758,6 +1892,11 @@ class CustomerServiceTest {
         assertThat(customer.getRegisteredAt()).isNotNull();
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
         assertThat(followUp.getContactRound()).isEqualTo(2);
+        verify(followUpConversionService).recordConversionIfAbsent(
+                customer,
+                customer.getRegisteredAt(),
+                ConversionSource.UNKNOWN
+        );
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
                         && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
@@ -1819,7 +1958,7 @@ class CustomerServiceTest {
                         && CustomerStatus.LOST.equals(timeline.getAfterValue().get("status"))
                         && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
         ));
-        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository, followUpConversionService);
     }
 
     @Test
@@ -1861,7 +2000,7 @@ class CustomerServiceTest {
         assertThat(response.isNextActionRegenerationAvailable()).isTrue();
         assertThat(customer.getStatus()).isEqualTo(CustomerStatus.NO_SHOW);
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
-        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository, followUpConversionService);
     }
 
     private Store store(UUID storeId) {
@@ -2035,6 +2174,24 @@ class CustomerServiceTest {
             OffsetDateTime consultedAt,
             String rawText
     ) {
+        return reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                consultedAt,
+                rawText,
+                ConsultationRegistrationStatus.PENDING,
+                null
+        );
+    }
+
+    private ReconsultationCreateRequest reconsultationCreateRequest(
+            UUID serviceId,
+            UUID counselorId,
+            OffsetDateTime consultedAt,
+            String rawText,
+            ConsultationRegistrationStatus registrationStatus,
+            UUID registeredServiceId
+    ) {
         ReconsultationCreateRequest request = new ReconsultationCreateRequest();
         ReconsultationCreateRequest.ConsultationInfo consultation =
                 new ReconsultationCreateRequest.ConsultationInfo();
@@ -2042,7 +2199,13 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(consultation, "consultedAt", consultedAt);
         ReflectionTestUtils.setField(consultation, "userId", counselorId);
         ReflectionTestUtils.setField(consultation, "rawText", rawText);
+        ReflectionTestUtils.setField(consultation, "visitPurpose", "체중 감량");
+        ReflectionTestUtils.setField(consultation, "experienceNote", "PT 경험 없음");
+        ReflectionTestUtils.setField(consultation, "positiveSignal", "단기권 관심");
+        ReflectionTestUtils.setField(consultation, "extraNote", "가격 안내 필요");
         ReflectionTestUtils.setField(request, "consultation", consultation);
+        ReflectionTestUtils.setField(request, "registrationStatus", registrationStatus);
+        ReflectionTestUtils.setField(request, "registeredServiceId", registeredServiceId);
         return request;
     }
 

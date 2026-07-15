@@ -7,6 +7,7 @@ import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateRespon
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
@@ -39,6 +40,7 @@ import com.fitback.domain.customer.entity.FollowUpAiInsight;
 import com.fitback.domain.customer.entity.MessageTemplate;
 import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
@@ -96,6 +98,7 @@ public class CustomerService {
     private final AiMessageClient aiMessageClient;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final FollowUpConversionService followUpConversionService;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -388,6 +391,14 @@ public class CustomerService {
                 .findByIdAndStoreIdAndActiveTrue(request.getConsultation().getConsultedServiceId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
 
+        ConsultationRegistrationStatus registrationStatus = request.getRegistrationStatus();
+        Service registeredService = resolveReconsultationRegisteredService(
+                registrationStatus,
+                request.getRegisteredServiceId(),
+                service,
+                storeId
+        );
+
         User counselor = userRepository
                 .findByIdAndStore_Id(request.getConsultation().getUserId(), storeId)
                 .orElseThrow(() -> new BusinessException(ConsultationErrorCode.COUNSELOR_NOT_FOUND));
@@ -405,20 +416,87 @@ public class CustomerService {
                 .stage(ConsultationStage.CONSULTATION)
                 .sourceType(ConsultationSourceType.DIRECT)
                 .rawText(request.getConsultation().getRawText())
+                .visitPurpose(request.getConsultation().getVisitPurpose())
+                .experienceNote(request.getConsultation().getExperienceNote())
+                .positiveSignal(request.getConsultation().getPositiveSignal())
+                .extraNote(request.getConsultation().getExtraNote())
                 .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
                 .build();
 
         Consultation savedConsultation = consultationRepository.save(consultation);
         customer.updateLatestConsultAt(request.getConsultation().getConsultedAt().toLocalDate());
+
+        CustomerStatus beforeStatus = customer.getStatus();
+        CustomerStatus afterStatus = resolveReconsultationCustomerStatus(registrationStatus);
+        String followUpAction = resolveFollowUpAction(afterStatus);
+
+        if (afterStatus == CustomerStatus.REGISTERED) {
+            customer.markRegistered(registeredService, request.getConsultation().getConsultedAt());
+        } else {
+            customer.markStatus(afterStatus);
+        }
+
+        FollowUp activeFollowUp = followUpRepository
+                .findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING)
+                .orElse(null);
+        if (FOLLOW_UP_ACTION_CLOSED.equals(followUpAction) && activeFollowUp != null) {
+            activeFollowUp.markClosed();
+        }
+
+        boolean followUpConversionCreated = false;
+        if (beforeStatus != CustomerStatus.REGISTERED && afterStatus == CustomerStatus.REGISTERED) {
+            followUpConversionCreated = followUpConversionService.recordConversionIfAbsent(
+                    customer,
+                    customer.getRegisteredAt(),
+                    ConversionSource.RECONSULTATION
+            );
+        }
+
         saveReconsultationCreatedTimeline(customer, counselor, service, savedConsultation);
+        if (beforeStatus != afterStatus) {
+            saveCustomerStatusChangedTimeline(customer, savedConsultation, beforeStatus, afterStatus, followUpAction);
+        }
         eventPublisher.publishEvent(new ConsultationCreatedEvent(savedConsultation.getId()));
 
         return ReconsultationCreateResponse.builder()
                 .customerId(customer.getId())
                 .consultationId(savedConsultation.getId())
                 .sessionNo(savedConsultation.getSessionNo())
+                .registrationStatus(registrationStatus)
+                .registeredServiceId(registeredService != null ? registeredService.getId() : null)
+                .followUpAction(followUpAction)
+                .followUpConversionCreated(followUpConversionCreated)
                 .aiAnalysisStatus(savedConsultation.getAiAnalysisStatus())
                 .build();
+    }
+
+    private Service resolveReconsultationRegisteredService(
+            ConsultationRegistrationStatus registrationStatus,
+            UUID registeredServiceId,
+            Service consultedService,
+            UUID storeId
+    ) {
+        if (registrationStatus != ConsultationRegistrationStatus.REGISTERED) {
+            return null;
+        }
+        if (registeredServiceId == null) {
+            throw new BusinessException(CustomerErrorCode.INVALID_CUSTOMER_STATUS);
+        }
+        if (registeredServiceId.equals(consultedService.getId())) {
+            return consultedService;
+        }
+        return serviceRepository
+                .findByIdAndStoreIdAndActiveTrue(registeredServiceId, storeId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.SERVICE_NOT_FOUND));
+    }
+
+    private CustomerStatus resolveReconsultationCustomerStatus(ConsultationRegistrationStatus registrationStatus) {
+        return switch (registrationStatus) {
+            case REGISTERED -> CustomerStatus.REGISTERED;
+            case PENDING -> CustomerStatus.PENDING;
+            case SCHEDULED -> CustomerStatus.SCHEDULED;
+            case LOST -> CustomerStatus.LOST;
+        };
     }
 
     @Transactional
@@ -601,6 +679,13 @@ public class CustomerService {
                 .orElse(null);
         if (FOLLOW_UP_ACTION_CLOSED.equals(followUpAction) && activeFollowUp != null) {
             activeFollowUp.markClosed();
+        }
+        if (beforeStatus != CustomerStatus.REGISTERED && afterStatus == CustomerStatus.REGISTERED) {
+            followUpConversionService.recordConversionIfAbsent(
+                    customer,
+                    customer.getRegisteredAt(),
+                    ConversionSource.UNKNOWN
+            );
         }
 
         saveCustomerStatusChangedTimeline(customer, latestConsultation, beforeStatus, afterStatus, followUpAction);

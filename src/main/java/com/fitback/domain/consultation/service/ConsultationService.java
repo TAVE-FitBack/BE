@@ -19,12 +19,14 @@ import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.InterestService;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
+import com.fitback.domain.customer.service.FollowUpConversionService;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.user.entity.User;
@@ -57,6 +59,7 @@ public class ConsultationService {
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final AiConsultationClient aiConsultationClient;
     private final ApplicationEventPublisher eventPublisher;
+    private final FollowUpConversionService followUpConversionService;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
         if (storeId == null) {
@@ -148,6 +151,13 @@ public class ConsultationService {
                 request.getConsultation().getConsultedAt()
         );
         Consultation consultation = saveConsultation(customer, counselor, service, request);
+        if (request.getConsultation().getRegistrationStatus() == ConsultationRegistrationStatus.REGISTERED) {
+            followUpConversionService.recordConversionIfAbsent(
+                    customer,
+                    customer.getRegisteredAt(),
+                    ConversionSource.DIRECT_REGISTRATION
+            );
+        }
         saveConsultationCreatedTimeline(customer, counselor, service, consultation);
         eventPublisher.publishEvent(new ConsultationCreatedEvent(consultation.getId()));
 
