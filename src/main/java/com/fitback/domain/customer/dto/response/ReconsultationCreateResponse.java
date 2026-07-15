@@ -1,6 +1,7 @@
 package com.fitback.domain.customer.dto.response;
 
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -15,5 +16,9 @@ public class ReconsultationCreateResponse {
     private UUID customerId;
     private UUID consultationId;
     private Integer sessionNo;
+    private ConsultationRegistrationStatus registrationStatus;
+    private UUID registeredServiceId;
+    private String followUpAction;
+    private boolean followUpConversionCreated;
     private AiAnalysisStatus aiAnalysisStatus;
 }

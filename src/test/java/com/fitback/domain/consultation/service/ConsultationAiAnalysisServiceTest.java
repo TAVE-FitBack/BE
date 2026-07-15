@@ -283,6 +283,31 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("REGISTERED 고객은 AI 분석 완료 후 새 PENDING follow_up을 생성하지 않는다")
+    void analyzeRegisteredCustomerDoesNotCreateFollowUp() {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customerWithStatus(CustomerStatus.REGISTERED);
+        Consultation consultation = consultation(consultationId, customer, service(), AiAnalysisStatus.PROCESSING);
+        AiConsultationAnalyzeResponse aiResponse = aiResponse();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse);
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.COMPLETED);
+        verify(followUpRepository, never()).findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(any(), any());
+        verify(followUpRepository, never()).save(any(FollowUp.class));
+        verify(followUpAiInsightRepository, never()).save(any(FollowUpAiInsight.class));
+
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_COMPLETED);
+        assertThat(timelineCaptor.getValue().getAfterValue()).containsEntry("followUpId", null);
+    }
+
+    @Test
     @DisplayName("상담이 없으면 로그만 남기고 상태 변경 없이 중단한다")
     void analyzeConsultationSkipsWhenConsultationNotFound() {
         UUID consultationId = UUID.randomUUID();
@@ -487,6 +512,10 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     private Customer customer() {
+        return customerWithStatus(CustomerStatus.PENDING);
+    }
+
+    private Customer customerWithStatus(CustomerStatus status) {
         Store store = store();
         return Customer.builder()
                 .id(UUID.randomUUID())
@@ -497,7 +526,7 @@ class ConsultationAiAnalysisServiceTest {
                 .phoneNum("010-1234-5678")
                 .preferredContactChannel(PreferredContactChannel.KAKAO)
                 .inflowPathOption(inflowPathOption(store))
-                .status(CustomerStatus.PENDING)
+                .status(status)
                 .firstConsultAt(LocalDate.of(2026, 7, 1))
                 .latestConsultAt(LocalDate.of(2026, 7, 1))
                 .build();

@@ -157,11 +157,21 @@ public class ConsultationAiAnalysisService {
             upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
             replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
 
-            FollowUp followUp = replaceActiveFollowUp(customer, consultation, response);
-            saveFollowUpAiInsight(followUp, response, now);
+            FollowUp followUp = null;
+            if (shouldCreateFollowUp(customer)) {
+                followUp = replaceActiveFollowUp(customer, consultation, response);
+                saveFollowUpAiInsight(followUp, response, now);
+            }
             saveAiAnalysisCompletedTimeline(consultation, response, followUp, now);
-            saveNextActionCreatedTimeline(consultation, followUp, response, now);
+            if (followUp != null) {
+                saveNextActionCreatedTimeline(consultation, followUp, response, now);
+            }
         });
+    }
+
+    private boolean shouldCreateFollowUp(Customer customer) {
+        return customer.getStatus() != CustomerStatus.REGISTERED
+                && customer.getStatus() != CustomerStatus.LOST;
     }
 
     private void saveAnalysisFailure(UUID consultationId, RuntimeException cause) {
@@ -334,7 +344,7 @@ public class ConsultationAiAnalysisService {
         afterValue.put("leadTemperature", response.getCustomerInsight().getLeadTemperature());
         afterValue.put("priorityScore", response.getCustomerInsight().getPriorityScore());
         afterValue.put("primaryReasonType", findPrimaryReasonType(response.getNonConversionReasons()));
-        afterValue.put("followUpId", followUp.getId());
+        afterValue.put("followUpId", followUp != null ? followUp.getId() : null);
 
         customerActivityTimelineRepository.save(CustomerActivityTimeline.builder()
                 .store(consultation.getCustomer().getStore())
