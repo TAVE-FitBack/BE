@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -89,6 +90,40 @@ class AnalysisReportFollowUpServiceTest {
         verify(queryRepository).findSummaryCounts(eq(storeId), startCaptor.capture(), endCaptor.capture());
         assertThat(startCaptor.getValue()).isEqualTo(OffsetDateTime.parse("2026-10-01T00:00:00+09:00"));
         assertThat(endCaptor.getValue()).isEqualTo(OffsetDateTime.parse("2026-11-01T00:00:00+09:00"));
+    }
+
+    @Test
+    @DisplayName("conversion graph uses saved follow_up_conversion contact rounds")
+    void getFollowUpReportUsesConversionRoundCounts() {
+        UUID storeId = UUID.randomUUID();
+        when(queryRepository.findSummaryCounts(eq(storeId), any(), any()))
+                .thenReturn(new SummaryCounts(9, 2, 7, 6));
+        when(queryRepository.findRegistrationChangeCounts(eq(storeId), any(), any()))
+                .thenReturn(new RegistrationChangeCounts(9, 1, 6));
+        when(queryRepository.findConversionGraphCounts(eq(storeId), any(), any()))
+                .thenReturn(new ConversionGraphCounts(9, 6, 3, 2));
+        when(queryRepository.findConversionRoundCounts(eq(storeId), any(), any()))
+                .thenReturn(List.of(
+                        new ConversionRoundCounts(1, 3, 8, 5),
+                        new ConversionRoundCounts(2, 2, 4, 2),
+                        new ConversionRoundCounts(3, 1, 1, 0)
+                ));
+        when(queryRepository.findNonRegisteredTargetCount(eq(storeId), any(), any()))
+                .thenReturn(3L);
+        when(queryRepository.findNonConversionReasonCounts(eq(storeId), any(), any()))
+                .thenReturn(List.of());
+
+        AnalysisReportFollowUpResponse response = service.getFollowUpReport(storeId, "2026-10");
+
+        assertThat(response.getConversionGraph().getRounds())
+                .extracting("contactRound", "registeredCount", "sentCount", "pendingCount")
+                .containsExactly(
+                        tuple(1, 3L, 8L, 5L),
+                        tuple(2, 2L, 4L, 2L),
+                        tuple(3, 1L, 1L, 0L)
+                );
+        assertThat(response.getConversionGraph().getFinalRegisteredCount()).isEqualTo(6);
+        assertThat(response.getConversionGraph().getUnattributedRegisteredCount()).isEqualTo(2);
     }
 
     @Test
