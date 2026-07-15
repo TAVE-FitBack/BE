@@ -62,7 +62,7 @@ public class ConsultationController {
     }
 
     @PostMapping
-    @Operation(summary = "상담 등록", description = "고객 정보, 등록/미등록 상태, 관심 서비스, 상담 기록, 고객 활동 타임라인을 하나의 트랜잭션으로 저장합니다.")
+    @Operation(summary = "상담 등록", description = "신규 고객 최초 상담을 저장합니다. 등록 완료 상태이면 등록 서비스와 등록 시각을 저장하고 후속 전환 귀속을 중복 없이 저장합니다.")
     public ResponseEntity<ApiResponse<ConsultationCreateResponse>> createConsultation(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
             @Valid @RequestBody ConsultationCreateRequest request

@@ -91,7 +91,7 @@ public class CustomerController {
     }
 
     @PostMapping("/{customerId}/consultations")
-    @Operation(summary = "재상담 등록", description = "기존 고객의 새 상담 회차를 저장하고 AI 분석을 비동기로 시작합니다.")
+    @Operation(summary = "재상담 등록", description = "기존 고객의 새 상담 회차, 누적 상담 정보, 등록 상태를 저장하고 REGISTERED 전환이면 후속 전환 귀속을 저장한 뒤 AI 분석을 비동기로 시작합니다.")
     public ResponseEntity<ApiResponse<ReconsultationCreateResponse>> createReconsultation(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
             @PathVariable UUID customerId,
@@ -125,7 +125,7 @@ public class CustomerController {
     }
 
     @PatchMapping("/{customerId}/status")
-    @Operation(summary = "고객 상태 변경", description = "고객 상태를 변경하고 상태에 따라 후속관리 상태를 연동합니다.")
+    @Operation(summary = "고객 상태 변경", description = "고객 상태를 변경하고 REGISTERED/LOST 전환 시 후속관리를 종료합니다. REGISTERED 전환이면 후속 전환 귀속을 중복 없이 저장합니다.")
     public ResponseEntity<ApiResponse<CustomerStatusUpdateResponse>> updateCustomerStatus(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
             @PathVariable UUID customerId,
