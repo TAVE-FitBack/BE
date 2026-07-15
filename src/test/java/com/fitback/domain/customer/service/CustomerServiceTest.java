@@ -38,6 +38,7 @@ import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.MessageTemplate;
 import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
@@ -134,6 +135,9 @@ class CustomerServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private FollowUpConversionService followUpConversionService;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -152,7 +156,8 @@ class CustomerServiceTest {
                 aiConsultationClient,
                 aiMessageClient,
                 userRepository,
-                eventPublisher
+                eventPublisher,
+                followUpConversionService
         );
     }
 
@@ -1758,6 +1763,11 @@ class CustomerServiceTest {
         assertThat(customer.getRegisteredAt()).isNotNull();
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.CLOSED);
         assertThat(followUp.getContactRound()).isEqualTo(2);
+        verify(followUpConversionService).recordConversionIfAbsent(
+                customer,
+                customer.getRegisteredAt(),
+                ConversionSource.UNKNOWN
+        );
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
                 timeline.getActivityType() == CustomerActivityType.CUSTOMER_STATUS_CHANGED
                         && timeline.getRelatedType() == ActivityRelatedType.CUSTOMER
@@ -1819,7 +1829,7 @@ class CustomerServiceTest {
                         && CustomerStatus.LOST.equals(timeline.getAfterValue().get("status"))
                         && "CLOSED".equals(timeline.getAfterValue().get("followUpAction"))
         ));
-        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository, followUpConversionService);
     }
 
     @Test
@@ -1861,7 +1871,7 @@ class CustomerServiceTest {
         assertThat(response.isNextActionRegenerationAvailable()).isTrue();
         assertThat(customer.getStatus()).isEqualTo(CustomerStatus.NO_SHOW);
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
-        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository);
+        verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository, followUpConversionService);
     }
 
     private Store store(UUID storeId) {

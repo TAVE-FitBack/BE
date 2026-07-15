@@ -39,6 +39,7 @@ import com.fitback.domain.customer.entity.FollowUpAiInsight;
 import com.fitback.domain.customer.entity.MessageTemplate;
 import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.FollowUpStatus;
@@ -96,6 +97,7 @@ public class CustomerService {
     private final AiMessageClient aiMessageClient;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final FollowUpConversionService followUpConversionService;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -601,6 +603,13 @@ public class CustomerService {
                 .orElse(null);
         if (FOLLOW_UP_ACTION_CLOSED.equals(followUpAction) && activeFollowUp != null) {
             activeFollowUp.markClosed();
+        }
+        if (beforeStatus != CustomerStatus.REGISTERED && afterStatus == CustomerStatus.REGISTERED) {
+            followUpConversionService.recordConversionIfAbsent(
+                    customer,
+                    customer.getRegisteredAt(),
+                    ConversionSource.UNKNOWN
+            );
         }
 
         saveCustomerStatusChangedTimeline(customer, latestConsultation, beforeStatus, afterStatus, followUpAction);
