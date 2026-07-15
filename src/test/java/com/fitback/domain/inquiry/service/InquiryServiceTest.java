@@ -722,7 +722,7 @@ class InquiryServiceTest {
     }
 
     @Test
-    @DisplayName("신규 고객 전환 완료 시 문의 상태와 전환 정보를 저장하고 타임라인에 신규 생성 여부를 기록한다")
+    @DisplayName("신규 고객 전환 완료 시 등록 전환이 아닌 PENDING 상담 고객으로 저장하고 타임라인을 기록한다")
     void convertInquiryUpdatesInquiryAndSavesNewCustomerTimeline() {
         UUID storeId = UUID.randomUUID();
         UUID inquiryId = UUID.randomUUID();
@@ -736,7 +736,12 @@ class InquiryServiceTest {
                 .user(counselor)
                 .inquiryStatus(InquiryStatus.RECEIVED)
                 .build();
-        Customer customer = Customer.builder().id(customerId).store(store).build();
+        Customer customer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .status(CustomerStatus.PENDING)
+                .registeredAt(null)
+                .build();
         Consultation consultation = Consultation.builder()
                 .id(consultationId)
                 .customer(customer)
@@ -762,6 +767,8 @@ class InquiryServiceTest {
         assertThat(inquiry.getConvertedCustomer()).isSameAs(customer);
         assertThat(inquiry.getConvertedConsultation()).isSameAs(consultation);
         assertThat(inquiry.getConvertedAt()).isNotNull();
+        assertThat(customer.getStatus()).isEqualTo(CustomerStatus.PENDING);
+        assertThat(customer.getRegisteredAt()).isNull();
 
         ArgumentCaptor<CustomerActivityTimeline> captor =
                 ArgumentCaptor.forClass(CustomerActivityTimeline.class);
