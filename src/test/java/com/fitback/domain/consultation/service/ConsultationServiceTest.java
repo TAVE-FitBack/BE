@@ -19,6 +19,7 @@ import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.InterestService;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
+import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
@@ -27,6 +28,7 @@ import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
+import com.fitback.domain.customer.service.FollowUpConversionService;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.store.entity.Store;
@@ -96,6 +98,9 @@ class ConsultationServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private FollowUpConversionService followUpConversionService;
+
     private ConsultationService consultationService;
 
     @BeforeEach
@@ -109,7 +114,8 @@ class ConsultationServiceTest {
                 consultationRepository,
                 customerActivityTimelineRepository,
                 aiConsultationClient,
-                eventPublisher
+                eventPublisher,
+                followUpConversionService
         );
     }
 
@@ -495,6 +501,11 @@ class ConsultationServiceTest {
         ArgumentCaptor<ConsultationCreatedEvent> eventCaptor = ArgumentCaptor.forClass(ConsultationCreatedEvent.class);
         verify(eventPublisher).publishEvent(eventCaptor.capture());
         assertThat(eventCaptor.getValue().consultationId()).isEqualTo(consultationId);
+        verify(followUpConversionService).recordConversionIfAbsent(
+                savedCustomer,
+                consultedAt,
+                ConversionSource.DIRECT_REGISTRATION
+        );
         verify(aiConsultationClient, never()).analyzeConsultation(any());
         verifyNoInteractions(interestServiceRepository);
         verifyNoMoreInteractions(customerRepository);
@@ -620,6 +631,7 @@ class ConsultationServiceTest {
         assertThat(consultationToSave.getSessionNo()).isEqualTo(1);
         assertThat(consultationToSave.getStage()).isEqualTo(ConsultationStage.CONSULTATION);
         assertThat(consultationToSave.getSourceType()).isEqualTo(ConsultationSourceType.DIRECT);
+        verifyNoInteractions(followUpConversionService);
     }
 
     @Test
