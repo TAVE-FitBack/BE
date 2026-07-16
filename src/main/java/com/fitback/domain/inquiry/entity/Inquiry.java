@@ -2,7 +2,7 @@ package com.fitback.domain.inquiry.entity;
 
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.customer.entity.Customer;
-import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.store.entity.InflowPathOption;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.inquiry.enums.InquiryStatus;

@@ -6,7 +6,7 @@ import com.fitback.domain.customer.dto.response.CustomerManagementConsultationLi
 import com.fitback.domain.customer.dto.response.CustomerManagementInquiryListResponse;
 import com.fitback.domain.customer.dto.response.CustomerManagementSummaryResponse;
 import com.fitback.domain.customer.exception.CustomerManagementErrorCode;
-import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;

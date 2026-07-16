@@ -9,7 +9,7 @@ import com.fitback.domain.customer.dto.response.CustomerManagementSummaryRespons
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.exception.CustomerManagementErrorCode;
-import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationPageRows;
 import com.fitback.domain.customer.repository.CustomerManagementQueryRepository.ConsultationRow;

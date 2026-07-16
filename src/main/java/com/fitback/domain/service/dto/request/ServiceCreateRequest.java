@@ -20,6 +20,5 @@ public class ServiceCreateRequest {
 
     private BigDecimal price;
 
-    @NotNull(message = "활성 여부를 선택하세요.")
     private boolean active;
 }

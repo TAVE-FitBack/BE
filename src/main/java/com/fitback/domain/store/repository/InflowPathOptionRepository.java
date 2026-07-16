@@ -1,6 +1,6 @@
-package com.fitback.domain.customer.repository;
+package com.fitback.domain.store.repository;
 
-import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.store.entity.InflowPathOption;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -12,4 +12,8 @@ public interface InflowPathOptionRepository extends JpaRepository<InflowPathOpti
     List<InflowPathOption> findAllByStoreIdAndActiveTrueOrderByDisplayOrderAsc(UUID storeId);
 
     Optional<InflowPathOption> findByIdAndStoreIdAndActiveTrue(UUID id, UUID storeId);
+
+    List<InflowPathOption> findAllByStoreIdOrderByDisplayOrder(UUID storeId);
+
+    Optional<InflowPathOption> findByIdAndStoreId(UUID id, UUID storeId);
 }

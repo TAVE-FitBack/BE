@@ -1,6 +1,6 @@
 package com.fitback.domain.inquiry.service;
 
-import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.store.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InterestService;
@@ -11,7 +11,7 @@ import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
-import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
@@ -69,7 +69,6 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
