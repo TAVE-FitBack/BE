@@ -66,7 +66,7 @@ public class InflowPathService {
 
     /* 매장 방문 경로 삭제 */
     @Transactional
-    public void deleteService(UUID userId, UUID inflowPathId) {
+    public void deleteInflowPath(UUID userId, UUID inflowPathId) {
         Store store = getStore(userId);
 
         InflowPathOption inflowPathOption = inflowPathOptionRepository.findByIdAndStoreId(inflowPathId, store.getId())

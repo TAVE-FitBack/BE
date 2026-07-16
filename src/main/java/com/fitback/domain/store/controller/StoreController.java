@@ -78,11 +78,11 @@ public class StoreController {
 
     @DeleteMapping("/inflow-paths/{inflowPathId}")
     @Operation(summary = "매장 방문 경로 삭제")
-    public ResponseEntity<ApiResponse<Void>> deleteService(
+    public ResponseEntity<ApiResponse<Void>> deleteInflowPath(
             @AuthenticationPrincipal(expression = "user.id") UUID userId,
             @PathVariable UUID inflowPathId
     ) {
-        inflowPathService.deleteService(userId, inflowPathId);
-        return ResponseEntity.ok(ApiResponse.onSuccess("서비스가 삭제되었습니다.", null));
+        inflowPathService.deleteInflowPath(userId, inflowPathId);
+        return ResponseEntity.ok(ApiResponse.onSuccess("방문 경로가 삭제되었습니다.", null));
     }
 }
