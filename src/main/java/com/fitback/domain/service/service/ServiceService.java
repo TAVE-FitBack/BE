@@ -46,7 +46,7 @@ public class ServiceService {
                         .name(request.getName())
                         .description(request.getDescription())
                         .price(request.getPrice())
-                        .active(request.isActive())
+                        .active(true)
                         .build()
         );
 

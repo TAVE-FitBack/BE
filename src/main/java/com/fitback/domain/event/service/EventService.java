@@ -4,9 +4,11 @@ import com.fitback.domain.event.dto.request.EventCreateRequest;
 import com.fitback.domain.event.dto.request.EventUpdateRequest;
 import com.fitback.domain.event.dto.response.EventResponse;
 import com.fitback.domain.event.entity.Event;
+import com.fitback.domain.event.enums.EventStatus;
 import com.fitback.domain.event.exception.EventErrorCode;
 import com.fitback.domain.event.repository.EventRepository;
 import com.fitback.domain.service.entity.Service;
+import com.fitback.domain.service.exception.ServiceErrorCode;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.store.entity.Store;
 import com.fitback.domain.store.exception.StoreErrorCode;
@@ -42,6 +44,12 @@ public class EventService {
     @Transactional
     public EventResponse createEvent(UUID userId, EventCreateRequest request) {
         Store store = getStore(userId);
+
+        // 종료일이 시작일보다 앞선 경우
+        if (request.getEndDate().isBefore(request.getStartDate())) {
+            throw new BusinessException(EventErrorCode.INVALID_EVENT_DATE);
+        }
+
         Service service = resolveService(request.getServiceId(), store.getId());
 
         Event event = Event.builder()
@@ -53,7 +61,7 @@ public class EventService {
                 .discountRate(request.getDiscountRate())
                 .startDate(request.getStartDate())
                 .endDate(request.getEndDate())
-                .status(request.getStatus())
+                .status(EventStatus.ACTIVE)
                 .build();
 
         eventRepository.save(event);
@@ -65,6 +73,11 @@ public class EventService {
     @Transactional
     public EventResponse updateEvent(UUID userId, UUID eventId, EventUpdateRequest request) {
         Store store = getStore(userId);
+
+        if (request.getEndDate().isBefore(request.getStartDate())) {
+            throw new BusinessException(EventErrorCode.INVALID_EVENT_DATE);
+        }
+
         Service service = resolveService(request.getServiceId(), store.getId());
 
         Event event = eventRepository.findByIdAndStoreId(eventId, store.getId())
@@ -97,8 +110,9 @@ public class EventService {
 
     private Service resolveService(UUID serviceId, UUID storeId) {
         if (serviceId == null) return null;
+
         return serviceRepository.findByIdAndStoreId(serviceId, storeId)
-                .orElse(null);
+                .orElseThrow(() -> new BusinessException(ServiceErrorCode.SERVICE_NOT_FOUND));
     }
 
     private Store getStore(UUID userId) {

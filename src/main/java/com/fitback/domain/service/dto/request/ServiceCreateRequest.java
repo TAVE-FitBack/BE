@@ -1,7 +1,6 @@
 package com.fitback.domain.service.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -19,6 +18,4 @@ public class ServiceCreateRequest {
     private String description;
 
     private BigDecimal price;
-
-    private boolean active;
 }

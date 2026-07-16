@@ -14,6 +14,4 @@ public class InflowPathCreateRequest {
     private String name;
 
     private int displayOrder;
-
-    private boolean active;
 }

@@ -35,6 +35,7 @@ public class EventUpdateRequest {
     @NotNull(message = "종료일을 입력하세요.")
     private LocalDate endDate;
 
+    // ACTIVE 또는 INACTIVE만 허용 (ENDED는 endDate 기준 자동 계산)
     @NotNull(message = "상태를 선택하세요.")
     private EventStatus status;
 }

@@ -44,7 +44,7 @@ public class InflowPathService {
                 .store(store)
                 .name(request.getName())
                 .displayOrder(request.getDisplayOrder())
-                .active(request.isActive())
+                .active(true)
                 .build();
         inflowPathOptionRepository.save(option);
 

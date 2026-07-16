@@ -1,6 +1,5 @@
 package com.fitback.domain.event.dto.request;
 
-import com.fitback.domain.event.enums.EventStatus;
 import com.fitback.domain.event.enums.EventType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -34,7 +33,4 @@ public class EventCreateRequest {
 
     @NotNull(message = "종료일을 입력하세요.")
     private LocalDate endDate;
-
-    @NotNull(message = "상태를 선택하세요.")
-    private EventStatus status;
 }

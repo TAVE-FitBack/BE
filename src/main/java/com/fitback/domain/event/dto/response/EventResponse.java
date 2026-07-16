@@ -25,6 +25,12 @@ public class EventResponse {
     private EventStatus status;
 
     public static EventResponse from(Event event) {
+        // endDate가 오늘 이전이면 ENDED로 자동 계산
+        EventStatus status =
+                event.getStatus() == EventStatus.ACTIVE && event.getEndDate().isBefore(LocalDate.now())
+                        ? EventStatus.ENDED
+                        : event.getStatus();
+
         return EventResponse.builder()
                 .id(event.getId())
                 .title(event.getTitle())
@@ -34,7 +40,7 @@ public class EventResponse {
                 .serviceId(event.getService() != null ? event.getService().getId() : null)
                 .startDate(event.getStartDate())
                 .endDate(event.getEndDate())
-                .status(event.getStatus())
+                .status(status)
                 .build();
     }
 }
