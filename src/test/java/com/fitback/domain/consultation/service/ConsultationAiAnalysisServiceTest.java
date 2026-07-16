@@ -14,7 +14,7 @@ import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.CustomerAiInsight;
 import com.fitback.domain.customer.entity.FollowUp;
 import com.fitback.domain.customer.entity.FollowUpAiInsight;
-import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.store.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
@@ -55,7 +55,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)

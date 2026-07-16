@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum StoreErrorCode implements BaseErrorCode {
 
+    // Store
     STORE_NOT_FOUND(
             HttpStatus.NOT_FOUND,
             "매장을 찾을 수 없습니다."
@@ -16,6 +17,12 @@ public enum StoreErrorCode implements BaseErrorCode {
     STORE_ALREADY_EXISTS(
             HttpStatus.CONFLICT,
             "이미 매장이 등록되어 있습니다."
+    ),
+
+    // Inflow Path
+    INFLOW_PATH_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "선택한 방문 경로를 찾을 수 없습니다."
     ),
     ;
 

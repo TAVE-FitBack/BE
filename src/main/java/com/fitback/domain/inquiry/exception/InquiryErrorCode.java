@@ -31,7 +31,7 @@ public enum InquiryErrorCode implements BaseErrorCode {
     ),
     INFLOW_PATH_NOT_FOUND(
             HttpStatus.NOT_FOUND,
-            "선택한 문의 경로를 찾을 수 없습니다."
+            "선택한 방문 경로를 찾을 수 없습니다."
     ),
     COUNSELOR_NOT_FOUND(
             HttpStatus.NOT_FOUND,

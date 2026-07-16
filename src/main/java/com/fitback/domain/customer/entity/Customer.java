@@ -4,6 +4,7 @@ import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.service.entity.Service;
+import com.fitback.domain.store.entity.InflowPathOption;
 import com.fitback.domain.store.entity.Store;
 import com.fitback.global.entity.BaseTimeEntity;
 import jakarta.persistence.*;

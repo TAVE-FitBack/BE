@@ -1,6 +1,6 @@
 package com.fitback.domain.inquiry.service;
 
-import com.fitback.domain.customer.entity.InflowPathOption;
+import com.fitback.domain.store.entity.InflowPathOption;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.InterestService;
@@ -9,7 +9,7 @@ import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerRepository;
-import com.fitback.domain.customer.repository.InflowPathOptionRepository;
+import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;

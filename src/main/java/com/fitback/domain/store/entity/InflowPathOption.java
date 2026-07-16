@@ -1,6 +1,5 @@
-package com.fitback.domain.customer.entity;
+package com.fitback.domain.store.entity;
 
-import com.fitback.domain.store.entity.Store;
 import com.fitback.global.entity.BaseTimeEntity;
 import jakarta.persistence.*;
 import lombok.*;
@@ -40,4 +39,10 @@ public class InflowPathOption extends BaseTimeEntity {
 
     @Column(name = "is_active", nullable = false)
     private boolean active;
+
+    public void update(String name, int displayOrder, boolean active) {
+        this.name = name;
+        this.displayOrder = displayOrder;
+        this.active = active;
+    }
 }

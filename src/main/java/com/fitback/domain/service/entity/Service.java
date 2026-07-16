@@ -36,4 +36,11 @@ public class Service extends BaseTimeEntity {
 
     @Column(name = "is_active", nullable = false)
     private boolean active;
+
+    public void update(String name, String description, BigDecimal price, boolean active) {
+        this.name = name;
+        this.description = description;
+        this.price = price;
+        this.active = active;
+    }
 }
