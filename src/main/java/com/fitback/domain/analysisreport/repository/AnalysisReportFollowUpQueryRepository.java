@@ -39,6 +39,7 @@ public class AnalysisReportFollowUpQueryRepository {
                             FROM follow_up f
                             WHERE f.customer_id = tc.customer_id
                               AND f.status = 'PENDING'
+                              AND f.status <> 'SUPERSEDED'
                         )
                     ) AS pending_follow_up_count,
                     COUNT(*) FILTER (
@@ -237,6 +238,75 @@ public class AnalysisReportFollowUpQueryRepository {
         );
     }
 
+    public List<AiInsightPatternCount> findAiInsightPatternCounts(
+            UUID storeId,
+            OffsetDateTime monthStartInclusive,
+            OffsetDateTime monthEndExclusive
+    ) {
+        String sql = targetCustomersCte() + """
+                , latest_follow_up AS (
+                    SELECT DISTINCT ON (f.customer_id)
+                           f.customer_id,
+                           f.id AS follow_up_id
+                    FROM follow_up f
+                    JOIN target_customers tc ON tc.customer_id = f.customer_id
+                    WHERE f.status <> 'SUPERSEDED'
+                    ORDER BY f.customer_id, f.created_at DESC, f.id DESC
+                ),
+                insight_patterns AS (
+                    SELECT
+                        'PRIMARY_REASON' AS pattern_type,
+                        NULLIF(BTRIM(fai.action_basis ->> 'primaryReason'), '') AS pattern_value
+                    FROM latest_follow_up lfu
+                    JOIN follow_up_ai_insight fai ON fai.follow_up_id = lfu.follow_up_id
+
+                    UNION ALL
+
+                    SELECT
+                        'BASIS' AS pattern_type,
+                        NULLIF(BTRIM(fai.action_basis ->> 'basis'), '') AS pattern_value
+                    FROM latest_follow_up lfu
+                    JOIN follow_up_ai_insight fai ON fai.follow_up_id = lfu.follow_up_id
+
+                    UNION ALL
+
+                    SELECT
+                        'PERSUASION_POINT' AS pattern_type,
+                        NULLIF(BTRIM(point.value), '') AS pattern_value
+                    FROM latest_follow_up lfu
+                    JOIN follow_up_ai_insight fai ON fai.follow_up_id = lfu.follow_up_id
+                    CROSS JOIN LATERAL jsonb_each_text(fai.persuasion_point) point
+
+                    UNION ALL
+
+                    SELECT
+                        'CAUTION_NOTE' AS pattern_type,
+                        NULLIF(BTRIM(fai.caution_note), '') AS pattern_value
+                    FROM latest_follow_up lfu
+                    JOIN follow_up_ai_insight fai ON fai.follow_up_id = lfu.follow_up_id
+                )
+                SELECT
+                    pattern_type,
+                    pattern_value,
+                    COUNT(*) AS pattern_count
+                FROM insight_patterns
+                WHERE pattern_value IS NOT NULL
+                GROUP BY pattern_type, pattern_value
+                ORDER BY pattern_count DESC, pattern_type ASC, pattern_value ASC
+                LIMIT 20
+                """;
+
+        return jdbcTemplate.query(
+                sql,
+                monthParams(storeId, monthStartInclusive, monthEndExclusive),
+                (rs, rowNum) -> new AiInsightPatternCount(
+                        rs.getString("pattern_type"),
+                        rs.getString("pattern_value"),
+                        rs.getLong("pattern_count")
+                )
+        );
+    }
+
     private String targetCustomersCte() {
         return """
                 WITH first_follow_up AS (
@@ -305,6 +375,13 @@ public class AnalysisReportFollowUpQueryRepository {
 
     public record NonConversionReasonCount(
             String reasonType,
+            long count
+    ) {
+    }
+
+    public record AiInsightPatternCount(
+            String patternType,
+            String patternValue,
             long count
     ) {
     }
