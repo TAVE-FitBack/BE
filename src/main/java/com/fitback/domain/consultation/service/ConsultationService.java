@@ -1,6 +1,7 @@
 package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCreateRequest;
@@ -8,11 +9,13 @@ import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -37,6 +40,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -56,10 +60,12 @@ public class ConsultationService {
     private final InflowPathOptionRepository inflowPathOptionRepository;
     private final InterestServiceRepository interestServiceRepository;
     private final ConsultationRepository consultationRepository;
+    private final ConsultationMaterialRepository consultationMaterialRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final AiConsultationClient aiConsultationClient;
     private final ApplicationEventPublisher eventPublisher;
     private final FollowUpConversionService followUpConversionService;
+    private final ConsultationMaterialFileService consultationMaterialFileService;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
         if (storeId == null) {
@@ -125,6 +131,15 @@ public class ConsultationService {
 
     @Transactional
     public ConsultationCreateResponse createConsultation(UUID storeId, ConsultationCreateRequest request) {
+        return createConsultation(storeId, request, null);
+    }
+
+    @Transactional
+    public ConsultationCreateResponse createConsultation(
+            UUID storeId,
+            ConsultationCreateRequest request,
+            List<MultipartFile> materials
+    ) {
         if (storeId == null) {
             throw new BusinessException(ConsultationErrorCode.STORE_NOT_ASSIGNED);
         }
@@ -159,6 +174,7 @@ public class ConsultationService {
             );
         }
         saveConsultationCreatedTimeline(customer, counselor, service, consultation);
+        saveConsultationMaterials(customer, consultation, counselor, materials);
         eventPublisher.publishEvent(new ConsultationCreatedEvent(consultation.getId()));
 
         return ConsultationCreateResponse.builder()
@@ -167,6 +183,40 @@ public class ConsultationService {
                 .sessionNo(consultation.getSessionNo())
                 .redirectUrl(buildConsultationRedirectUrl(customer.getId(), consultation.getId()))
                 .build();
+    }
+
+    private void saveConsultationMaterials(
+            Customer customer,
+            Consultation consultation,
+            User counselor,
+            List<MultipartFile> materials
+    ) {
+        if (materials == null || materials.isEmpty()) {
+            return;
+        }
+
+        List<ConsultationMaterialFileData> materialData = consultationMaterialFileService.extractMaterials(materials);
+        if (materialData.isEmpty()) {
+            return;
+        }
+
+        List<ConsultationMaterial> entities = materialData.stream()
+                .map(data -> ConsultationMaterial.builder()
+                        .store(counselor.getStore())
+                        .customer(customer)
+                        .consultation(consultation)
+                        .inquiry(null)
+                        .materialType(data.getMaterialType())
+                        .title(data.getTitle())
+                        .originalFileName(data.getOriginalFileName())
+                        .contentType(data.getContentType())
+                        .fileSize(data.getFileSize())
+                        .content(data.getContent())
+                        .createdBy(counselor)
+                        .build())
+                .toList();
+
+        consultationMaterialRepository.saveAll(entities);
     }
 
     public ConsultationCustomerSearchResponse searchCustomerByPhone(UUID storeId, String phone) {

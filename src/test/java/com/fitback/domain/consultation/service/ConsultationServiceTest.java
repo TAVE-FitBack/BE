@@ -1,6 +1,7 @@
 package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCreateRequest;
@@ -8,11 +9,14 @@ import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchResponse;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.enums.ConsultationMaterialType;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -47,10 +51,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -63,6 +70,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -90,6 +98,9 @@ class ConsultationServiceTest {
     private ConsultationRepository consultationRepository;
 
     @Mock
+    private ConsultationMaterialRepository consultationMaterialRepository;
+
+    @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
     @Mock
@@ -100,6 +111,9 @@ class ConsultationServiceTest {
 
     @Mock
     private FollowUpConversionService followUpConversionService;
+
+    @Mock
+    private ConsultationMaterialFileService consultationMaterialFileService;
 
     private ConsultationService consultationService;
 
@@ -112,10 +126,12 @@ class ConsultationServiceTest {
                 inflowPathOptionRepository,
                 interestServiceRepository,
                 consultationRepository,
+                consultationMaterialRepository,
                 customerActivityTimelineRepository,
                 aiConsultationClient,
                 eventPublisher,
-                followUpConversionService
+                followUpConversionService,
+                consultationMaterialFileService
         );
     }
 
@@ -742,6 +758,138 @@ class ConsultationServiceTest {
         assertThat(timeline.getAfterValue()).containsEntry("consultedServiceId", serviceId);
         assertThat(timeline.getAfterValue()).containsEntry("customerStatus", CustomerStatus.REGISTERED);
         assertThat(timeline.getOccurredAt()).isNotNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("신규상담 등록 시 첨부파일이 있으면 상담자료를 저장한 뒤 AI 분석 이벤트를 발행한다")
+    void createConsultationSavesMaterialsBeforePublishingEvent() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-06-30T14:00:00+09:00");
+
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer savedCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .registeredService(null)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(CustomerStatus.PENDING)
+                .registeredAt(null)
+                .firstConsultAt(consultedAt.toLocalDate())
+                .latestConsultAt(consultedAt.toLocalDate())
+                .build();
+        Consultation savedConsultation = Consultation.builder()
+                .id(consultationId)
+                .customer(savedCustomer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(consultedAt)
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("상담 원문")
+                .build();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                ConsultationRegistrationStatus.PENDING,
+                consultedAt
+        );
+        MockMultipartFile file = new MockMultipartFile(
+                "materials",
+                "kakao-chat.txt",
+                "text/plain",
+                "첨부 상담자료".getBytes()
+        );
+        List<MultipartFile> materials = List.of(file);
+        ConsultationMaterialFileData materialData = ConsultationMaterialFileData.builder()
+                .materialType(ConsultationMaterialType.OTHER)
+                .title("kakao-chat")
+                .originalFileName("kakao-chat.txt")
+                .contentType("text/plain")
+                .fileSize(file.getSize())
+                .content("첨부 상담자료")
+                .build();
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(customerRepository.findByPhoneNumAndStoreId("010-1234-5678", storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenReturn(savedCustomer);
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenReturn(savedConsultation);
+        when(consultationMaterialFileService.extractMaterials(materials))
+                .thenReturn(List.of(materialData));
+
+        consultationService.createConsultation(storeId, request, materials);
+
+        ArgumentCaptor<List<ConsultationMaterial>> materialCaptor = ArgumentCaptor.forClass(List.class);
+        verify(consultationMaterialRepository).saveAll(materialCaptor.capture());
+        assertThat(materialCaptor.getValue()).hasSize(1);
+        ConsultationMaterial material = materialCaptor.getValue().get(0);
+        assertThat(material.getStore()).isEqualTo(store);
+        assertThat(material.getCustomer()).isEqualTo(savedCustomer);
+        assertThat(material.getConsultation()).isEqualTo(savedConsultation);
+        assertThat(material.getInquiry()).isNull();
+        assertThat(material.getMaterialType()).isEqualTo(ConsultationMaterialType.OTHER);
+        assertThat(material.getTitle()).isEqualTo("kakao-chat");
+        assertThat(material.getOriginalFileName()).isEqualTo("kakao-chat.txt");
+        assertThat(material.getContentType()).isEqualTo("text/plain");
+        assertThat(material.getFileSize()).isEqualTo(file.getSize());
+        assertThat(material.getContent()).isEqualTo("첨부 상담자료");
+        assertThat(material.getCreatedBy()).isEqualTo(counselor);
+
+        ArgumentCaptor<ConsultationCreatedEvent> eventCaptor = ArgumentCaptor.forClass(ConsultationCreatedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().consultationId()).isEqualTo(consultationId);
+
+        InOrder inOrder = inOrder(consultationMaterialRepository, eventPublisher);
+        inOrder.verify(consultationMaterialRepository).saveAll(any());
+        inOrder.verify(eventPublisher).publishEvent(any(ConsultationCreatedEvent.class));
     }
 
     @Test
