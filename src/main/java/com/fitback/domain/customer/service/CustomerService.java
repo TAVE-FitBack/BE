@@ -1,17 +1,21 @@
 package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
 import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
 import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
@@ -65,6 +69,7 @@ import com.fitback.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.OffsetDateTime;
 import java.util.Arrays;
@@ -86,6 +91,7 @@ public class CustomerService {
 
     private final CustomerRepository customerRepository;
     private final ConsultationRepository consultationRepository;
+    private final ConsultationMaterialRepository consultationMaterialRepository;
     private final CustomerAiInsightRepository customerAiInsightRepository;
     private final NonConversionReasonRepository nonConversionReasonRepository;
     private final FollowUpRepository followUpRepository;
@@ -99,6 +105,7 @@ public class CustomerService {
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final FollowUpConversionService followUpConversionService;
+    private final ConsultationMaterialFileService consultationMaterialFileService;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -376,6 +383,16 @@ public class CustomerService {
             UUID customerId,
             ReconsultationCreateRequest request
     ) {
+        return createReconsultation(storeId, customerId, request, null);
+    }
+
+    @Transactional
+    public ReconsultationCreateResponse createReconsultation(
+            UUID storeId,
+            UUID customerId,
+            ReconsultationCreateRequest request,
+            List<MultipartFile> materials
+    ) {
         if (storeId == null) {
             throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
         }
@@ -456,6 +473,7 @@ public class CustomerService {
         if (beforeStatus != afterStatus) {
             saveCustomerStatusChangedTimeline(customer, savedConsultation, beforeStatus, afterStatus, followUpAction);
         }
+        saveReconsultationMaterials(customer, savedConsultation, counselor, materials);
         eventPublisher.publishEvent(new ConsultationCreatedEvent(savedConsultation.getId()));
 
         return ReconsultationCreateResponse.builder()
@@ -468,6 +486,40 @@ public class CustomerService {
                 .followUpConversionCreated(followUpConversionCreated)
                 .aiAnalysisStatus(savedConsultation.getAiAnalysisStatus())
                 .build();
+    }
+
+    private void saveReconsultationMaterials(
+            Customer customer,
+            Consultation consultation,
+            User counselor,
+            List<MultipartFile> materials
+    ) {
+        if (materials == null || materials.isEmpty()) {
+            return;
+        }
+
+        List<ConsultationMaterialFileData> materialData = consultationMaterialFileService.extractMaterials(materials);
+        if (materialData.isEmpty()) {
+            return;
+        }
+
+        List<ConsultationMaterial> entities = materialData.stream()
+                .map(data -> ConsultationMaterial.builder()
+                        .store(customer.getStore())
+                        .customer(customer)
+                        .consultation(consultation)
+                        .inquiry(null)
+                        .materialType(data.getMaterialType())
+                        .title(data.getTitle())
+                        .originalFileName(data.getOriginalFileName())
+                        .contentType(data.getContentType())
+                        .fileSize(data.getFileSize())
+                        .content(data.getContent())
+                        .createdBy(counselor)
+                        .build())
+                .toList();
+
+        consultationMaterialRepository.saveAll(entities);
     }
 
     private Service resolveReconsultationRegisteredService(
