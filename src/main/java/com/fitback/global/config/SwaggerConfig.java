@@ -21,6 +21,7 @@ public class SwaggerConfig {
                         .title("FitBack API")
                         .version("v1.0"))
                 .servers(List.of(
+                        new Server().url("https://api.fitback.site").description("Fitback"),
                         new Server().url("http://localhost:8080").description("Local")
                 ))
                 .addSecurityItem(new SecurityRequirement().addList("bearerAuth"))

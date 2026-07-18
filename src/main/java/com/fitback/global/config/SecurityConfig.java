@@ -55,7 +55,8 @@ public class SecurityConfig {
         config.setAllowedOrigins(List.of(
                 "http://localhost:3000",
                 "http://localhost:5173",
-                "https://fitback-sigma.vercel.app"
+                "https://fitback-sigma.vercel.app",
+                "https://api.fitback.site"
         ));
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
