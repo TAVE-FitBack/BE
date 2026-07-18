@@ -51,6 +51,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -72,6 +73,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -761,11 +763,23 @@ class InquiryServiceTest {
                 .customer(customer)
                 .sessionNo(1)
                 .build();
+        ConsultationMaterial material = ConsultationMaterial.builder()
+                .store(store)
+                .customer(null)
+                .consultation(null)
+                .inquiry(inquiry)
+                .materialType(ConsultationMaterialType.OTHER)
+                .title("문의 첨부자료")
+                .content("문의 첨부 내용")
+                .createdBy(counselor)
+                .build();
         InquiryConversionContext context = InquiryConversionContext.newCustomer(customer, consultation);
         InquiryService service = spy(inquiryService);
 
         doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
         doReturn(context).when(service).resolveCustomerConversion(inquiry);
+        when(consultationMaterialRepository.findAllByInquiryIdOrderByCreatedAtAsc(inquiryId))
+                .thenReturn(List.of(material));
 
         InquiryConvertToConsultationResponse result = service.convertInquiry(storeId, inquiryId);
 
@@ -783,6 +797,9 @@ class InquiryServiceTest {
         assertThat(inquiry.getConvertedAt()).isNotNull();
         assertThat(customer.getStatus()).isEqualTo(CustomerStatus.PENDING);
         assertThat(customer.getRegisteredAt()).isNull();
+        assertThat(material.getInquiry()).isSameAs(inquiry);
+        assertThat(material.getCustomer()).isSameAs(customer);
+        assertThat(material.getConsultation()).isSameAs(consultation);
 
         ArgumentCaptor<CustomerActivityTimeline> captor =
                 ArgumentCaptor.forClass(CustomerActivityTimeline.class);
@@ -803,7 +820,10 @@ class InquiryServiceTest {
                 .containsEntry("customerId", customerId)
                 .containsEntry("consultationId", consultationId)
                 .containsEntry("sessionNo", 1);
-        verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
+        InOrder inOrder = inOrder(consultationMaterialRepository, consultationRepository, eventPublisher);
+        inOrder.verify(consultationMaterialRepository).findAllByInquiryIdOrderByCreatedAtAsc(inquiryId);
+        inOrder.verify(consultationRepository).flush();
+        inOrder.verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
     }
 
     @Test

@@ -203,6 +203,7 @@ public class InquiryService {
             OffsetDateTime convertedAt = OffsetDateTime.now();
 
             inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
+            connectInquiryMaterialsToConsultation(inquiry, context);
             saveInquiryConvertedTimeline(inquiry, context, convertedAt);
             consultationRepository.flush();
             eventPublisher.publishEvent(new ConsultationCreatedEvent(context.consultation().getId()));
@@ -301,6 +302,17 @@ public class InquiryService {
         }
 
         return InquiryConversionContext.existingCustomer(customer, consultation);
+    }
+
+    private void connectInquiryMaterialsToConsultation(
+            Inquiry inquiry,
+            InquiryConversionContext context
+    ) {
+        consultationMaterialRepository.findAllByInquiryIdOrderByCreatedAtAsc(inquiry.getId())
+                .forEach(material -> material.connectConvertedConsultation(
+                        context.customer(),
+                        context.consultation()
+                ));
     }
 
     private void saveInquiryConvertedTimeline(
