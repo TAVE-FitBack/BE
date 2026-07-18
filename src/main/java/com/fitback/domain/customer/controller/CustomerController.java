@@ -16,10 +16,12 @@ import com.fitback.domain.customer.dto.response.ReconsultationCreateResponse;
 import com.fitback.domain.customer.service.CustomerService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,8 +30,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -90,14 +95,22 @@ public class CustomerController {
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 
-    @PostMapping("/{customerId}/consultations")
-    @Operation(summary = "재상담 등록", description = "기존 고객의 새 상담 회차, 누적 상담 정보, 등록 상태를 저장하고 REGISTERED 전환이면 후속 전환 귀속을 저장한 뒤 AI 분석을 비동기로 시작합니다.")
+    @PostMapping(value = "/{customerId}/consultations", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "재상담 등록", description = "multipart/form-data로 기존 고객의 새 상담 회차, 누적 상담 정보, 등록 상태를 저장합니다. request part에는 재상담 등록 JSON을, materials part에는 선택 상담자료 .txt 파일을 최대 3개까지 전달합니다. AI 중간 점검은 첨부자료를 받지 않습니다.")
     public ResponseEntity<ApiResponse<ReconsultationCreateResponse>> createReconsultation(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
             @PathVariable UUID customerId,
-            @Valid @RequestBody ReconsultationCreateRequest request
+            @Parameter(description = "재상담 등록 요청 JSON part", required = true)
+            @Valid @RequestPart("request") ReconsultationCreateRequest request,
+            @Parameter(description = "선택 상담자료 파일 part. .txt만 허용하며 최대 3개, 파일당 1MB까지 지원합니다.")
+            @RequestPart(value = "materials", required = false) List<MultipartFile> materials
     ) {
-        ReconsultationCreateResponse response = customerService.createReconsultation(storeId, customerId, request);
+        ReconsultationCreateResponse response = customerService.createReconsultation(
+                storeId,
+                customerId,
+                request,
+                materials
+        );
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.onSuccess(response));
     }

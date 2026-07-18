@@ -1,15 +1,20 @@
 package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
+import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
 import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
 import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.ConsultationMaterialType;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
 import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
@@ -68,10 +73,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -86,6 +95,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -99,6 +109,9 @@ class CustomerServiceTest {
 
     @Mock
     private ConsultationRepository consultationRepository;
+
+    @Mock
+    private ConsultationMaterialRepository consultationMaterialRepository;
 
     @Mock
     private CustomerAiInsightRepository customerAiInsightRepository;
@@ -139,6 +152,9 @@ class CustomerServiceTest {
     @Mock
     private FollowUpConversionService followUpConversionService;
 
+    @Mock
+    private ConsultationMaterialFileService consultationMaterialFileService;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -146,6 +162,7 @@ class CustomerServiceTest {
         customerService = new CustomerService(
                 customerRepository,
                 consultationRepository,
+                consultationMaterialRepository,
                 customerAiInsightRepository,
                 nonConversionReasonRepository,
                 followUpRepository,
@@ -158,7 +175,8 @@ class CustomerServiceTest {
                 aiMessageClient,
                 userRepository,
                 eventPublisher,
-                followUpConversionService
+                followUpConversionService,
+                consultationMaterialFileService
         );
     }
 
@@ -1489,6 +1507,111 @@ class CustomerServiceTest {
         ));
         verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(newConsultationId));
         verifyNoInteractions(followUpConversionService);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("재상담 등록 시 첨부파일이 있으면 customer_id와 consultation_id 기준으로 상담자료를 저장한 뒤 AI 이벤트를 발행한다")
+    void createReconsultationSavesMaterialsBeforePublishingEvent() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        UUID latestConsultationId = UUID.randomUUID();
+        UUID newConsultationId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(serviceId, store, "PT");
+        InflowPathOption inflowPathOption = inflowPathOption(UUID.randomUUID(), store);
+        Customer customer = customer(customerId, store, null, inflowPathOption);
+        User counselor = user(counselorId, store, "문형주");
+        Consultation latestConsultation = consultation(
+                latestConsultationId,
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        ReconsultationCreateRequest request = reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00"),
+                "재상담 원문"
+        );
+        MockMultipartFile file = new MockMultipartFile(
+                "materials",
+                "reconsultation-note.txt",
+                "text/plain",
+                "재상담 첨부자료".getBytes()
+        );
+        List<MultipartFile> materials = List.of(file);
+        ConsultationMaterialFileData materialData = ConsultationMaterialFileData.builder()
+                .materialType(ConsultationMaterialType.OTHER)
+                .title("reconsultation-note")
+                .originalFileName("reconsultation-note.txt")
+                .contentType("text/plain")
+                .fileSize(file.getSize())
+                .content("재상담 첨부자료")
+                .build();
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId)).thenReturn(Optional.of(counselor));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(consultationRepository.save(any(Consultation.class))).thenAnswer(invocation -> {
+            Consultation unsaved = invocation.getArgument(0);
+            return Consultation.builder()
+                    .id(newConsultationId)
+                    .customer(unsaved.getCustomer())
+                    .user(unsaved.getUser())
+                    .consultedService(unsaved.getConsultedService())
+                    .consultedAt(unsaved.getConsultedAt())
+                    .sessionNo(unsaved.getSessionNo())
+                    .stage(unsaved.getStage())
+                    .sourceType(unsaved.getSourceType())
+                    .rawText(unsaved.getRawText())
+                    .visitPurpose(unsaved.getVisitPurpose())
+                    .experienceNote(unsaved.getExperienceNote())
+                    .positiveSignal(unsaved.getPositiveSignal())
+                    .extraNote(unsaved.getExtraNote())
+                    .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
+                    .build();
+        });
+        when(consultationMaterialFileService.extractMaterials(materials))
+                .thenReturn(List.of(materialData));
+
+        ReconsultationCreateResponse response = customerService.createReconsultation(
+                storeId,
+                customerId,
+                request,
+                materials
+        );
+
+        assertThat(response.getConsultationId()).isEqualTo(newConsultationId);
+        ArgumentCaptor<List<ConsultationMaterial>> materialCaptor = ArgumentCaptor.forClass(List.class);
+        verify(consultationMaterialRepository).saveAll(materialCaptor.capture());
+        assertThat(materialCaptor.getValue()).hasSize(1);
+        ConsultationMaterial material = materialCaptor.getValue().get(0);
+        assertThat(material.getStore()).isEqualTo(store);
+        assertThat(material.getCustomer()).isEqualTo(customer);
+        assertThat(material.getConsultation().getId()).isEqualTo(newConsultationId);
+        assertThat(material.getInquiry()).isNull();
+        assertThat(material.getMaterialType()).isEqualTo(ConsultationMaterialType.OTHER);
+        assertThat(material.getTitle()).isEqualTo("reconsultation-note");
+        assertThat(material.getOriginalFileName()).isEqualTo("reconsultation-note.txt");
+        assertThat(material.getContentType()).isEqualTo("text/plain");
+        assertThat(material.getFileSize()).isEqualTo(file.getSize());
+        assertThat(material.getContent()).isEqualTo("재상담 첨부자료");
+        assertThat(material.getCreatedBy()).isEqualTo(counselor);
+
+        ArgumentCaptor<ConsultationCreatedEvent> eventCaptor = ArgumentCaptor.forClass(ConsultationCreatedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().consultationId()).isEqualTo(newConsultationId);
+
+        InOrder inOrder = inOrder(consultationMaterialRepository, eventPublisher);
+        inOrder.verify(consultationMaterialRepository).saveAll(any());
+        inOrder.verify(eventPublisher).publishEvent(any(ConsultationCreatedEvent.class));
     }
 
     @Test

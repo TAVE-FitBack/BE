@@ -8,10 +8,12 @@ import com.fitback.domain.consultation.dto.response.ConsultationNewResponse;
 import com.fitback.domain.consultation.service.ConsultationService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,8 +21,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -61,13 +66,16 @@ public class ConsultationController {
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 
-    @PostMapping
-    @Operation(summary = "상담 등록", description = "신규 고객 최초 상담을 저장합니다. 등록 완료 상태이면 등록 서비스와 등록 시각을 저장하고 후속 전환 귀속을 중복 없이 저장합니다.")
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "상담 등록", description = "multipart/form-data로 신규 고객 최초 상담을 저장합니다. request part에는 상담 등록 JSON을, materials part에는 선택 상담자료 .txt 파일을 최대 3개까지 전달합니다. AI 중간 점검은 첨부자료를 받지 않습니다.")
     public ResponseEntity<ApiResponse<ConsultationCreateResponse>> createConsultation(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
-            @Valid @RequestBody ConsultationCreateRequest request
+            @Parameter(description = "상담 등록 요청 JSON part", required = true)
+            @Valid @RequestPart("request") ConsultationCreateRequest request,
+            @Parameter(description = "선택 상담자료 파일 part. .txt만 허용하며 최대 3개, 파일당 1MB까지 지원합니다.")
+            @RequestPart(value = "materials", required = false) List<MultipartFile> materials
     ) {
-        ConsultationCreateResponse response = consultationService.createConsultation(storeId, request);
+        ConsultationCreateResponse response = consultationService.createConsultation(storeId, request, materials);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.onSuccess(response));
     }

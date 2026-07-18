@@ -13,12 +13,17 @@ import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
+import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.enums.ConsultationMaterialType;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
@@ -46,12 +51,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -66,6 +73,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -100,6 +109,12 @@ class InquiryServiceTest {
     private ConsultationRepository consultationRepository;
 
     @Mock
+    private ConsultationMaterialRepository consultationMaterialRepository;
+
+    @Mock
+    private ConsultationMaterialFileService consultationMaterialFileService;
+
+    @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
     @Mock
@@ -118,6 +133,8 @@ class InquiryServiceTest {
                 customerRepository,
                 interestServiceRepository,
                 consultationRepository,
+                consultationMaterialRepository,
+                consultationMaterialFileService,
                 customerActivityTimelineRepository,
                 eventPublisher
         );
@@ -746,11 +763,23 @@ class InquiryServiceTest {
                 .customer(customer)
                 .sessionNo(1)
                 .build();
+        ConsultationMaterial material = ConsultationMaterial.builder()
+                .store(store)
+                .customer(null)
+                .consultation(null)
+                .inquiry(inquiry)
+                .materialType(ConsultationMaterialType.OTHER)
+                .title("문의 첨부자료")
+                .content("문의 첨부 내용")
+                .createdBy(counselor)
+                .build();
         InquiryConversionContext context = InquiryConversionContext.newCustomer(customer, consultation);
         InquiryService service = spy(inquiryService);
 
         doReturn(inquiry).when(service).loadInquiryForConversion(storeId, inquiryId);
         doReturn(context).when(service).resolveCustomerConversion(inquiry);
+        when(consultationMaterialRepository.findAllByInquiryIdOrderByCreatedAtAsc(inquiryId))
+                .thenReturn(List.of(material));
 
         InquiryConvertToConsultationResponse result = service.convertInquiry(storeId, inquiryId);
 
@@ -768,6 +797,9 @@ class InquiryServiceTest {
         assertThat(inquiry.getConvertedAt()).isNotNull();
         assertThat(customer.getStatus()).isEqualTo(CustomerStatus.PENDING);
         assertThat(customer.getRegisteredAt()).isNull();
+        assertThat(material.getInquiry()).isSameAs(inquiry);
+        assertThat(material.getCustomer()).isSameAs(customer);
+        assertThat(material.getConsultation()).isSameAs(consultation);
 
         ArgumentCaptor<CustomerActivityTimeline> captor =
                 ArgumentCaptor.forClass(CustomerActivityTimeline.class);
@@ -788,7 +820,10 @@ class InquiryServiceTest {
                 .containsEntry("customerId", customerId)
                 .containsEntry("consultationId", consultationId)
                 .containsEntry("sessionNo", 1);
-        verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
+        InOrder inOrder = inOrder(consultationMaterialRepository, consultationRepository, eventPublisher);
+        inOrder.verify(consultationMaterialRepository).findAllByInquiryIdOrderByCreatedAtAsc(inquiryId);
+        inOrder.verify(consultationRepository).flush();
+        inOrder.verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
     }
 
     @Test
@@ -1358,6 +1393,111 @@ class InquiryServiceTest {
         verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
         verify(aiInquiryClient).checkPreview(any(AiInquiryCheckPreviewRequest.class));
         verifyNoInteractions(inflowPathOptionRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("문의 등록 시 첨부자료는 inquiry_id 기준으로 저장하고 customer_id와 consultation_id는 비워둔다")
+    void createInquiryWithMaterials() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        OffsetDateTime inquiredAt = OffsetDateTime.parse("2026-06-01T13:00:00+09:00");
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("워크인")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        Inquiry savedInquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .service(service)
+                .user(counselor)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .inquiredAt(inquiredAt)
+                .visitScheduledAt(null)
+                .rawText("문의 원문")
+                .build();
+        InquiryCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                InquiryStatus.RECEIVED,
+                inquiredAt,
+                null
+        );
+        List<MultipartFile> materials = List.of(mock(MultipartFile.class));
+        ConsultationMaterialFileData materialData = ConsultationMaterialFileData.builder()
+                .materialType(ConsultationMaterialType.OTHER)
+                .title("카카오톡 상담 기록")
+                .originalFileName("카카오톡 상담 기록.txt")
+                .contentType("text/plain")
+                .fileSize(123L)
+                .content("대화 내용")
+                .build();
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inquiryRepository.save(any(Inquiry.class)))
+                .thenReturn(savedInquiry);
+        when(consultationMaterialFileService.extractMaterials(materials))
+                .thenReturn(List.of(materialData));
+
+        inquiryService.createInquiry(storeId, request, materials);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ConsultationMaterial>> materialCaptor = ArgumentCaptor.forClass(List.class);
+        verify(consultationMaterialRepository).saveAll(materialCaptor.capture());
+        List<ConsultationMaterial> savedMaterials = materialCaptor.getValue();
+        assertThat(savedMaterials).hasSize(1);
+
+        ConsultationMaterial material = savedMaterials.get(0);
+        assertThat(material.getStore()).isSameAs(store);
+        assertThat(material.getCustomer()).isNull();
+        assertThat(material.getConsultation()).isNull();
+        assertThat(material.getInquiry()).isSameAs(savedInquiry);
+        assertThat(material.getMaterialType()).isEqualTo(ConsultationMaterialType.OTHER);
+        assertThat(material.getTitle()).isEqualTo("카카오톡 상담 기록");
+        assertThat(material.getOriginalFileName()).isEqualTo("카카오톡 상담 기록.txt");
+        assertThat(material.getContentType()).isEqualTo("text/plain");
+        assertThat(material.getFileSize()).isEqualTo(123L);
+        assertThat(material.getContent()).isEqualTo("대화 내용");
+        assertThat(material.getCreatedBy()).isSameAs(counselor);
     }
 
     private InquiryCheckPreviewRequest checkPreviewRequest(UUID serviceId, InquiryStatus inquiryStatus) {

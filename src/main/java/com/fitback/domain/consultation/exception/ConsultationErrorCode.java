@@ -56,6 +56,26 @@ public enum ConsultationErrorCode implements BaseErrorCode {
     AI_ANALYSIS_SAVE_FAILED(
             HttpStatus.INTERNAL_SERVER_ERROR,
             "AI 분석 결과 저장 중 오류가 발생했습니다."
+    ),
+    CONSULTATION_MATERIAL_FILE_COUNT_EXCEEDED(
+            HttpStatus.BAD_REQUEST,
+            "상담자료 첨부파일은 요청당 최대 3개까지 등록할 수 있습니다."
+    ),
+    CONSULTATION_MATERIAL_FILE_SIZE_EXCEEDED(
+            HttpStatus.BAD_REQUEST,
+            "상담자료 첨부파일은 파일당 최대 1MB까지 등록할 수 있습니다."
+    ),
+    CONSULTATION_MATERIAL_UNSUPPORTED_FILE_TYPE(
+            HttpStatus.BAD_REQUEST,
+            "상담자료 첨부파일은 .txt 파일만 등록할 수 있습니다."
+    ),
+    CONSULTATION_MATERIAL_ENCODING_UNSUPPORTED(
+            HttpStatus.BAD_REQUEST,
+            "상담자료 첨부파일 인코딩은 UTF-8 또는 MS949만 지원합니다."
+    ),
+    CONSULTATION_MATERIAL_CONTENT_TOO_LONG(
+            HttpStatus.BAD_REQUEST,
+            "상담자료 첨부파일의 전체 텍스트 길이는 요청당 최대 30,000자까지 등록할 수 있습니다."
     );
 
     private final HttpStatus httpStatus;

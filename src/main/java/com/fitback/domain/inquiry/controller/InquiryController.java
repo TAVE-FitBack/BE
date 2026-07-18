@@ -8,11 +8,13 @@ import com.fitback.domain.inquiry.dto.response.InquiryNewResponse;
 import com.fitback.domain.inquiry.service.InquiryService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,9 +22,12 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -78,7 +83,7 @@ public class InquiryController {
     }
 
     @PostMapping("/{inquiryId}/convert-to-consultation")
-    @Operation(summary = "문의 상담 전환", description = "문의 기록을 고객의 상담 기록으로 전환합니다.")
+    @Operation(summary = "문의 상담 전환", description = "문의 기록을 고객의 상담 기록으로 전환합니다. 별도 파일은 받지 않으며, 문의 등록 시 저장된 첨부자료가 있으면 생성된 상담에 연결해 AI 본분석 참고자료로 사용합니다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(
                     responseCode = "201",
@@ -110,13 +115,16 @@ public class InquiryController {
                 .body(ApiResponse.onSuccess(response));
     }
 
-    @PostMapping
-    @Operation(summary = "문의 등록", description = "고객 기본 정보와 문의 정보를 문의 건 단위로 저장합니다.")
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "문의 등록", description = "multipart/form-data로 고객 기본 정보와 문의 정보를 문의 건 단위로 저장합니다. request part에는 문의 등록 JSON을, materials part에는 선택 상담자료 .txt 파일을 최대 3개까지 전달합니다. AI 중간 점검은 첨부자료를 받지 않습니다.")
     public ResponseEntity<ApiResponse<InquiryCreateResponse>> createInquiry(
             @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
-            @Valid @RequestBody InquiryCreateRequest request
+            @Parameter(description = "문의 등록 요청 JSON part", required = true)
+            @Valid @RequestPart("request") InquiryCreateRequest request,
+            @Parameter(description = "선택 상담자료 파일 part. .txt만 허용하며 최대 3개, 파일당 1MB까지 지원합니다.")
+            @RequestPart(value = "materials", required = false) List<MultipartFile> materials
     ) {
-        InquiryCreateResponse response = inquiryService.createInquiry(storeId, request);
+        InquiryCreateResponse response = inquiryService.createInquiry(storeId, request, materials);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.onSuccess(response));
     }

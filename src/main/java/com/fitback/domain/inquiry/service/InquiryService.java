@@ -12,11 +12,15 @@ import com.fitback.domain.customer.repository.CustomerRepository;
 import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
+import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
@@ -40,6 +44,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.OffsetDateTime;
 import java.util.Arrays;
@@ -67,6 +72,8 @@ public class InquiryService {
     private final CustomerRepository customerRepository;
     private final InterestServiceRepository interestServiceRepository;
     private final ConsultationRepository consultationRepository;
+    private final ConsultationMaterialRepository consultationMaterialRepository;
+    private final ConsultationMaterialFileService consultationMaterialFileService;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -196,6 +203,7 @@ public class InquiryService {
             OffsetDateTime convertedAt = OffsetDateTime.now();
 
             inquiry.markConverted(context.customer(), context.consultation(), convertedAt);
+            connectInquiryMaterialsToConsultation(inquiry, context);
             saveInquiryConvertedTimeline(inquiry, context, convertedAt);
             consultationRepository.flush();
             eventPublisher.publishEvent(new ConsultationCreatedEvent(context.consultation().getId()));
@@ -296,6 +304,17 @@ public class InquiryService {
         return InquiryConversionContext.existingCustomer(customer, consultation);
     }
 
+    private void connectInquiryMaterialsToConsultation(
+            Inquiry inquiry,
+            InquiryConversionContext context
+    ) {
+        consultationMaterialRepository.findAllByInquiryIdOrderByCreatedAtAsc(inquiry.getId())
+                .forEach(material -> material.connectConvertedConsultation(
+                        context.customer(),
+                        context.consultation()
+                ));
+    }
+
     private void saveInquiryConvertedTimeline(
             Inquiry inquiry,
             InquiryConversionContext context,
@@ -335,6 +354,15 @@ public class InquiryService {
 
     @Transactional
     public InquiryCreateResponse createInquiry(UUID storeId, InquiryCreateRequest request) {
+        return createInquiry(storeId, request, null);
+    }
+
+    @Transactional
+    public InquiryCreateResponse createInquiry(
+            UUID storeId,
+            InquiryCreateRequest request,
+            List<MultipartFile> materials
+    ) {
         if (storeId == null) {
             throw new BusinessException(InquiryErrorCode.STORE_NOT_ASSIGNED);
         }
@@ -374,11 +402,41 @@ public class InquiryService {
                 .build();
 
         Inquiry savedInquiry = inquiryRepository.save(inquiry);
+        saveInquiryMaterials(savedInquiry, counselor, materials);
 
         return InquiryCreateResponse.builder()
                 .inquiryId(savedInquiry.getId())
                 .redirectUrl(INQUIRY_TAB_REDIRECT_URL)
                 .build();
+    }
+
+    private void saveInquiryMaterials(Inquiry inquiry, User counselor, List<MultipartFile> materials) {
+        if (materials == null || materials.isEmpty()) {
+            return;
+        }
+
+        List<ConsultationMaterialFileData> materialData = consultationMaterialFileService.extractMaterials(materials);
+        if (materialData.isEmpty()) {
+            return;
+        }
+
+        List<ConsultationMaterial> consultationMaterials = materialData.stream()
+                .map(data -> ConsultationMaterial.builder()
+                        .store(inquiry.getStore())
+                        .customer(null)
+                        .consultation(null)
+                        .inquiry(inquiry)
+                        .materialType(data.getMaterialType())
+                        .title(data.getTitle())
+                        .originalFileName(data.getOriginalFileName())
+                        .contentType(data.getContentType())
+                        .fileSize(data.getFileSize())
+                        .content(data.getContent())
+                        .createdBy(counselor)
+                        .build())
+                .toList();
+
+        consultationMaterialRepository.saveAll(consultationMaterials);
     }
 
     private void validateInquiryStatus(InquiryCreateRequest.InquiryInfo inquiry) {
