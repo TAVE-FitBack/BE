@@ -102,6 +102,42 @@ class ConsultationMaterialFileServiceTest {
     }
 
     @Test
+    @DisplayName("비어 있는 파일은 허용하지 않는다")
+    void extractMaterialsRejectsEmptyFile() {
+        MockMultipartFile file = new MockMultipartFile("materials", "empty.txt", "text/plain", new byte[0]);
+
+        assertThatThrownBy(() -> service.extractMaterials(List.of(file)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.INVALID_INPUT_VALUE);
+    }
+
+    @Test
+    @DisplayName(".TXT 대문자 확장자도 txt 파일로 허용한다")
+    void extractMaterialsAcceptsUppercaseTxtExtension() {
+        MockMultipartFile file = file("MEMO.TXT", "text/plain", "상담 내용");
+
+        List<ConsultationMaterialFileData> materials = service.extractMaterials(List.of(file));
+
+        assertThat(materials).hasSize(1);
+        assertThat(materials.get(0).getTitle()).isEqualTo("MEMO");
+        assertThat(materials.get(0).getOriginalFileName()).isEqualTo("MEMO.TXT");
+        assertThat(materials.get(0).getContent()).isEqualTo("상담 내용");
+    }
+
+    @Test
+    @DisplayName("UTF-8과 MS949로 모두 읽을 수 없으면 인코딩 예외가 발생한다")
+    void extractMaterialsRejectsUnsupportedEncoding() {
+        byte[] bytes = new byte[]{(byte) 0x81, 0x30};
+        MockMultipartFile file = new MockMultipartFile("materials", "broken.txt", "text/plain", bytes);
+
+        assertThatThrownBy(() -> service.extractMaterials(List.of(file)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ConsultationErrorCode.CONSULTATION_MATERIAL_ENCODING_UNSUPPORTED);
+    }
+
+    @Test
     @DisplayName("추출 텍스트가 비어 있으면 예외가 발생한다")
     void extractMaterialsRejectsBlankContent() {
         MockMultipartFile file = file("blank.txt", "text/plain", "   ");
