@@ -4,10 +4,13 @@ import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.entity.Consultation;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
+import com.fitback.domain.consultation.enums.ConsultationMaterialType;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.Customer;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
@@ -55,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -62,6 +66,9 @@ class ConsultationAiAnalysisServiceTest {
 
     @Mock
     private ConsultationRepository consultationRepository;
+
+    @Mock
+    private ConsultationMaterialRepository consultationMaterialRepository;
 
     @Mock
     private AiConsultationClient aiConsultationClient;
@@ -92,6 +99,7 @@ class ConsultationAiAnalysisServiceTest {
                 .thenAnswer(invocation -> new SimpleTransactionStatus());
         consultationAiAnalysisService = new ConsultationAiAnalysisService(
                 consultationRepository,
+                consultationMaterialRepository,
                 aiConsultationClient,
                 customerAiInsightRepository,
                 nonConversionReasonRepository,
@@ -100,6 +108,8 @@ class ConsultationAiAnalysisServiceTest {
                 customerActivityTimelineRepository,
                 transactionManager
         );
+        lenient().when(consultationMaterialRepository.findAllByConsultationIdOrderByCreatedAtAsc(any()))
+                .thenReturn(List.of());
     }
 
     @Test
@@ -156,6 +166,7 @@ class ConsultationAiAnalysisServiceTest {
                 .isEqualTo(ConsultationSourceType.INQUIRY);
         assertThat(requestCaptor.getValue().getConsultation().getRawText())
                 .isEqualTo("문의 전환 상담 원문");
+        assertThat(requestCaptor.getValue().getAttachedMaterials()).isEmpty();
 
         ArgumentCaptor<CustomerAiInsight> aiInsightCaptor = ArgumentCaptor.forClass(CustomerAiInsight.class);
         verify(customerAiInsightRepository).save(aiInsightCaptor.capture());
@@ -187,6 +198,46 @@ class ConsultationAiAnalysisServiceTest {
                 .containsExactly(CustomerActivityType.AI_ANALYSIS_COMPLETED, CustomerActivityType.NEXT_ACTION_CREATED);
 
         verify(consultationRepository, org.mockito.Mockito.times(2)).findById(consultationId);
+    }
+
+    @Test
+    @DisplayName("상담자료가 있으면 AI 본분석 요청에 attachedMaterials로 포함한다")
+    void analyzeConsultationIncludesAttachedMaterials() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = consultation(consultationId, customer(), service(), AiAnalysisStatus.PROCESSING);
+        ConsultationMaterial material = ConsultationMaterial.builder()
+                .id(UUID.randomUUID())
+                .consultation(consultation)
+                .materialType(ConsultationMaterialType.OTHER)
+                .title("kakao-chat")
+                .content("카카오톡 상담 기록")
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(consultationMaterialRepository.findAllByConsultationIdOrderByCreatedAtAsc(consultationId))
+                .thenReturn(List.of(material));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(consultation.getCustomer().getId())).thenReturn(Optional.empty());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
+                consultation.getCustomer().getId(),
+                FollowUpStatus.PENDING
+        )).thenReturn(Optional.empty());
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(consultation.getCustomer())
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .build());
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        ArgumentCaptor<AiConsultationAnalyzeRequest> requestCaptor = ArgumentCaptor.forClass(AiConsultationAnalyzeRequest.class);
+        verify(aiConsultationClient).analyzeConsultation(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().getAttachedMaterials()).hasSize(1);
+        assertThat(requestCaptor.getValue().getAttachedMaterials().get(0).getMaterialType()).isEqualTo("OTHER");
+        assertThat(requestCaptor.getValue().getAttachedMaterials().get(0).getTitle()).isEqualTo("kakao-chat");
+        assertThat(requestCaptor.getValue().getAttachedMaterials().get(0).getContent()).isEqualTo("카카오톡 상담 기록");
     }
 
     @Test

@@ -2,10 +2,12 @@ package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
+import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
+import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.customer.entity.CustomerActivityTimeline;
 import com.fitback.domain.customer.entity.CustomerAiInsight;
@@ -44,6 +46,7 @@ import java.util.UUID;
 public class ConsultationAiAnalysisService {
 
     private final ConsultationRepository consultationRepository;
+    private final ConsultationMaterialRepository consultationMaterialRepository;
     private final AiConsultationClient aiConsultationClient;
     private final CustomerAiInsightRepository customerAiInsightRepository;
     private final NonConversionReasonRepository nonConversionReasonRepository;
@@ -143,6 +146,22 @@ public class ConsultationAiAnalysisService {
                         .storeType(require(store.getStoreType(), "storeType"))
                         .registrationStatus(resolveRegistrationStatus(require(customer.getStatus(), "customerStatus")))
                         .build())
+                .attachedMaterials(toAttachedMaterials(require(consultation.getId(), "consultationId")))
+                .build();
+    }
+
+    private List<AiConsultationAnalyzeRequest.AttachedMaterialInfo> toAttachedMaterials(UUID consultationId) {
+        return consultationMaterialRepository.findAllByConsultationIdOrderByCreatedAtAsc(consultationId)
+                .stream()
+                .map(this::toAttachedMaterialInfo)
+                .toList();
+    }
+
+    private AiConsultationAnalyzeRequest.AttachedMaterialInfo toAttachedMaterialInfo(ConsultationMaterial material) {
+        return AiConsultationAnalyzeRequest.AttachedMaterialInfo.builder()
+                .materialType(require(material.getMaterialType(), "materialType").name())
+                .title(require(material.getTitle(), "materialTitle"))
+                .content(require(material.getContent(), "materialContent"))
                 .build();
     }
 

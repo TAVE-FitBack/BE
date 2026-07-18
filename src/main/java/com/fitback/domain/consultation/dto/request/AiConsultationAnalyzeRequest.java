@@ -14,6 +14,7 @@ import lombok.Getter;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Getter
@@ -25,6 +26,7 @@ public class AiConsultationAnalyzeRequest {
     private ConsultationInfo consultation;
     private ServiceInfo service;
     private StoreContext storeContext;
+    private List<AttachedMaterialInfo> attachedMaterials;
 
     @Getter
     @Builder
@@ -71,5 +73,14 @@ public class AiConsultationAnalyzeRequest {
         private UUID storeId;
         private StoreType storeType;
         private ConsultationRegistrationStatus registrationStatus;
+    }
+
+    @Getter
+    @Builder
+    @AllArgsConstructor
+    public static class AttachedMaterialInfo {
+        private String materialType;
+        private String title;
+        private String content;
     }
 }
