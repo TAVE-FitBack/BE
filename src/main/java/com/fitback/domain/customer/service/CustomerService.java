@@ -16,6 +16,7 @@ import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
+import com.fitback.domain.consultation.service.ConsultationSignalService;
 import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
@@ -106,6 +107,7 @@ public class CustomerService {
     private final ApplicationEventPublisher eventPublisher;
     private final FollowUpConversionService followUpConversionService;
     private final ConsultationMaterialFileService consultationMaterialFileService;
+    private final ConsultationSignalService consultationSignalService;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -437,6 +439,7 @@ public class CustomerService {
                 .build();
 
         Consultation savedConsultation = consultationRepository.save(consultation);
+        consultationSignalService.saveSnapshot(savedConsultation, request.getAiCheckPreview());
         customer.updateLatestConsultAt(request.getConsultation().getConsultedAt().toLocalDate());
 
         CustomerStatus beforeStatus = customer.getStatus();

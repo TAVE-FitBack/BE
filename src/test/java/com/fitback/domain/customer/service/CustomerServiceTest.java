@@ -2,11 +2,14 @@ package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewItemRequest;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
 import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.AiCheckSignalKey;
 import com.fitback.domain.consultation.enums.ConsultationMaterialType;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
@@ -15,6 +18,7 @@ import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
+import com.fitback.domain.consultation.service.ConsultationSignalService;
 import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
@@ -155,6 +159,9 @@ class CustomerServiceTest {
     @Mock
     private ConsultationMaterialFileService consultationMaterialFileService;
 
+    @Mock
+    private ConsultationSignalService consultationSignalService;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -176,7 +183,8 @@ class CustomerServiceTest {
                 userRepository,
                 eventPublisher,
                 followUpConversionService,
-                consultationMaterialFileService
+                consultationMaterialFileService,
+                consultationSignalService
         );
     }
 
@@ -1498,7 +1506,65 @@ class CustomerServiceTest {
                         && newConsultationId.equals(timeline.getRelatedId())
         ));
         verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(newConsultationId));
+        verify(consultationSignalService).saveSnapshot(any(Consultation.class), org.mockito.ArgumentMatchers.isNull());
         verifyNoInteractions(followUpConversionService);
+    }
+
+    @Test
+    @DisplayName("재상담 등록 요청에 aiCheckPreview가 있으면 consultation 저장 후 consultation_signal 저장 서비스를 호출한다")
+    void createReconsultationSavesAiCheckPreviewSnapshot() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        UUID latestConsultationId = UUID.randomUUID();
+        UUID newConsultationId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(serviceId, store, "PT");
+        InflowPathOption inflowPathOption = inflowPathOption(UUID.randomUUID(), store);
+        Customer customer = customer(customerId, store, null, inflowPathOption);
+        User counselor = user(counselorId, store, "문형주");
+        Consultation latestConsultation = consultation(
+                latestConsultationId,
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        Consultation savedConsultation = Consultation.builder()
+                .id(newConsultationId)
+                .customer(customer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
+                .sessionNo(3)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("재상담 원문")
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build();
+        AiCheckPreviewSnapshotRequest aiCheckPreview = aiCheckPreviewSnapshot();
+        ReconsultationCreateRequest request = reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00"),
+                "재상담 원문"
+        );
+        ReflectionTestUtils.setField(request, "aiCheckPreview", aiCheckPreview);
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId)).thenReturn(Optional.of(counselor));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(consultationRepository.save(any(Consultation.class))).thenReturn(savedConsultation);
+
+        customerService.createReconsultation(storeId, customerId, request);
+
+        InOrder inOrder = inOrder(consultationRepository, consultationSignalService);
+        inOrder.verify(consultationRepository).save(any(Consultation.class));
+        inOrder.verify(consultationSignalService).saveSnapshot(savedConsultation, aiCheckPreview);
     }
 
     @Test
@@ -2313,6 +2379,41 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(request, "consultation", consultation);
         ReflectionTestUtils.setField(request, "registrationStatus", registrationStatus);
         ReflectionTestUtils.setField(request, "registeredServiceId", registeredServiceId);
+        return request;
+    }
+
+    private AiCheckPreviewSnapshotRequest aiCheckPreviewSnapshot() {
+        AiCheckPreviewItemRequest exerciseGoal = aiCheckPreviewItem(
+                AiCheckSignalKey.EXERCISE_GOAL,
+                "운동 목적",
+                true,
+                "체중 감량"
+        );
+        AiCheckPreviewItemRequest injuryHistory = aiCheckPreviewItem(
+                AiCheckSignalKey.INJURY_HISTORY,
+                "부상 경험",
+                false,
+                "아직 확인되지 않음"
+        );
+
+        AiCheckPreviewSnapshotRequest request = new AiCheckPreviewSnapshotRequest();
+        ReflectionTestUtils.setField(request, "confirmedCount", 1);
+        ReflectionTestUtils.setField(request, "totalCount", 2);
+        ReflectionTestUtils.setField(request, "items", List.of(exerciseGoal, injuryHistory));
+        return request;
+    }
+
+    private AiCheckPreviewItemRequest aiCheckPreviewItem(
+            AiCheckSignalKey key,
+            String label,
+            boolean confirmed,
+            String value
+    ) {
+        AiCheckPreviewItemRequest request = new AiCheckPreviewItemRequest();
+        ReflectionTestUtils.setField(request, "key", key);
+        ReflectionTestUtils.setField(request, "label", label);
+        ReflectionTestUtils.setField(request, "confirmed", confirmed);
+        ReflectionTestUtils.setField(request, "value", value);
         return request;
     }
 
