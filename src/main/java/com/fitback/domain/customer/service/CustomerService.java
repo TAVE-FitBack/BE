@@ -1479,7 +1479,7 @@ public class CustomerService {
     ) {
         Map<String, Object> detail = baseTimelineDetail("CONSULTATION", item);
         if (consultation == null) {
-            return detail;
+            return buildFallbackTimelineDetail(item, "CONSULTATION");
         }
 
         detail.put("body", consultation.getRawText());
@@ -1502,7 +1502,7 @@ public class CustomerService {
     ) {
         Map<String, Object> detail = baseTimelineDetail("MESSAGE_TEMPLATE", item);
         if (messageTemplate == null) {
-            return detail;
+            return buildFallbackTimelineDetail(item, "MESSAGE_TEMPLATE");
         }
 
         detail.put("body", messageTemplate.getContent());
@@ -1571,6 +1571,16 @@ public class CustomerService {
         } else {
             putFromMap(detail, item.getAfterValue(), "nextActionTitle");
         }
+        return detail;
+    }
+
+    private Map<String, Object> buildFallbackTimelineDetail(
+            CustomerActivityTimeline item,
+            String type
+    ) {
+        Map<String, Object> detail = baseTimelineDetail(type, item);
+        detail.put("relatedType", item.getRelatedType());
+        detail.put("relatedId", item.getRelatedId());
         return detail;
     }
 
