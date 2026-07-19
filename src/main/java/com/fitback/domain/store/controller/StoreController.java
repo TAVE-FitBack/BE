@@ -9,6 +9,7 @@ import com.fitback.domain.store.service.InflowPathService;
 import com.fitback.domain.store.service.StoreService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +34,7 @@ public class StoreController {
     @PostMapping
     @Operation(summary = "매장 초기 설정", description = "최초 로그인 시 매장 정보 설정")
     public ResponseEntity<ApiResponse<StoreSetupResponse>> setup(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
             @Valid @RequestBody StoreSetupRequest request
     ) {
         StoreSetupResponse response = storeService.setup(userId, request);
@@ -44,7 +45,7 @@ public class StoreController {
     @GetMapping("/inflow-paths")
     @Operation(summary = "매장 방문 경로 목록 조회")
     public ResponseEntity<ApiResponse<List<InflowPathResponse>>> getInflowPaths(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId
     ) {
         return ResponseEntity.ok(ApiResponse.onSuccess(inflowPathService.getInflowPaths(userId)));
     }
@@ -52,7 +53,7 @@ public class StoreController {
     @PostMapping("/inflow-paths")
     @Operation(summary = "매장 방문 경로 등록")
     public ResponseEntity<ApiResponse<InflowPathResponse>> createInflowPath(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
             @Valid @RequestBody InflowPathCreateRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -65,8 +66,8 @@ public class StoreController {
     @PutMapping("/inflow-paths/{inflowPathId}")
     @Operation(summary = "매장 방문 경로 수정")
     public ResponseEntity<ApiResponse<InflowPathResponse>> updateInflowPath(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID inflowPathId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Inflow path ID") @PathVariable UUID inflowPathId,
             @Valid @RequestBody InflowPathUpdateRequest request
     ) {
         return ResponseEntity.ok(
@@ -79,8 +80,8 @@ public class StoreController {
     @DeleteMapping("/inflow-paths/{inflowPathId}")
     @Operation(summary = "매장 방문 경로 삭제")
     public ResponseEntity<ApiResponse<Void>> deleteInflowPath(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID inflowPathId
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Inflow path ID") @PathVariable UUID inflowPathId
     ) {
         inflowPathService.deleteInflowPath(userId, inflowPathId);
         return ResponseEntity.ok(ApiResponse.onSuccess("방문 경로가 삭제되었습니다.", null));

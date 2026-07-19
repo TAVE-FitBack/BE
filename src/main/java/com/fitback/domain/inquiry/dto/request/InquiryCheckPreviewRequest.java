@@ -2,6 +2,7 @@ package com.fitback.domain.inquiry.dto.request;
 
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -48,6 +49,11 @@ public class InquiryCheckPreviewRequest {
         private UUID serviceId;
 
         @NotNull(message = "문의 상태는 필수입니다.")
+        @Schema(
+                description = "Inquiry status used for AI preview",
+                allowableValues = {"RECEIVED", "VISIT_SCHEDULED", "VISIT_CANCELED"},
+                example = "RECEIVED"
+        )
         private InquiryStatus inquiryStatus;
 
         @NotBlank(message = "문의 내용은 필수입니다.")

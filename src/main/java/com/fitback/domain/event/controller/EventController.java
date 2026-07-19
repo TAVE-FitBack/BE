@@ -6,6 +6,7 @@ import com.fitback.domain.event.dto.response.EventResponse;
 import com.fitback.domain.event.service.EventService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,7 @@ public class EventController {
     @GetMapping
     @Operation(summary = "이벤트 목록 조회")
     public ResponseEntity<ApiResponse<List<EventResponse>>> getEvents(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId
     ) {
         return ResponseEntity.ok(ApiResponse.onSuccess(eventService.getEvents(userId)));
     }
@@ -36,7 +37,7 @@ public class EventController {
     @PostMapping
     @Operation(summary = "이벤트 등록")
     public ResponseEntity<ApiResponse<EventResponse>> createEvent(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
             @Valid @RequestBody EventCreateRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -46,8 +47,8 @@ public class EventController {
     @PutMapping("/{eventId}")
     @Operation(summary = "이벤트 수정")
     public ResponseEntity<ApiResponse<EventResponse>> updateEvent(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID eventId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Event ID") @PathVariable UUID eventId,
             @Valid @RequestBody EventUpdateRequest request
     ) {
         return ResponseEntity.ok(ApiResponse.onSuccess("이벤트가 수정되었습니다.", eventService.updateEvent(userId, eventId, request)));
@@ -56,8 +57,8 @@ public class EventController {
     @DeleteMapping("/{eventId}")
     @Operation(summary = "이벤트 삭제")
     public ResponseEntity<ApiResponse<Void>> deleteEvent(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID eventId
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Event ID") @PathVariable UUID eventId
     ) {
         eventService.deleteEvent(userId, eventId);
         return ResponseEntity.ok(ApiResponse.onSuccess("이벤트가 삭제되었습니다.", null));

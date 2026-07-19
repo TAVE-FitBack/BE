@@ -2,6 +2,7 @@ package com.fitback.domain.customer.dto.request;
 
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -20,8 +21,14 @@ public class ReconsultationCreateRequest {
     private ConsultationInfo consultation;
 
     @NotNull(message = "등록 상태는 필수입니다.")
+    @Schema(
+            description = "Registration status selected after reconsultation",
+            allowableValues = {"REGISTERED", "PENDING", "SCHEDULED", "LOST"},
+            example = "PENDING"
+    )
     private ConsultationRegistrationStatus registrationStatus;
 
+    @Schema(description = "Registered service ID. Required when registrationStatus is REGISTERED")
     private UUID registeredServiceId;
 
     @Valid
