@@ -360,9 +360,13 @@ public class ConsultationAiAnalysisService {
             OffsetDateTime occurredAt
     ) {
         Map<String, Object> afterValue = new LinkedHashMap<>();
+        afterValue.put("summary", response.getSummary());
         afterValue.put("leadTemperature", response.getCustomerInsight().getLeadTemperature());
+        afterValue.put("temperatureBasis", response.getCustomerInsight().getTemperatureBasis());
         afterValue.put("priorityScore", response.getCustomerInsight().getPriorityScore());
         afterValue.put("primaryReasonType", findPrimaryReasonType(response.getNonConversionReasons()));
+        afterValue.put("nonConversionReasons", toNonConversionReasonTimelineValues(response.getNonConversionReasons()));
+        afterValue.put("nextBestAction", toNextBestActionTimelineValue(response.getNextBestAction()));
         afterValue.put("followUpId", followUp != null ? followUp.getId() : null);
 
         customerActivityTimelineRepository.save(CustomerActivityTimeline.builder()
@@ -388,6 +392,36 @@ public class ConsultationAiAnalysisService {
                 .map(AiConsultationAnalyzeResponse.NonConversionReason::getReasonType)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private List<Map<String, Object>> toNonConversionReasonTimelineValues(
+            List<AiConsultationAnalyzeResponse.NonConversionReason> reasons
+    ) {
+        if (reasons == null || reasons.isEmpty()) {
+            return List.of();
+        }
+        return reasons.stream()
+                .map(reason -> {
+                    Map<String, Object> value = new LinkedHashMap<>();
+                    value.put("reasonType", reason.getReasonType());
+                    value.put("role", reason.getRole());
+                    value.put("reasonBasis", reason.getReasonBasis());
+                    value.put("confidence", reason.getConfidence());
+                    return value;
+                })
+                .toList();
+    }
+
+    private Map<String, Object> toNextBestActionTimelineValue(
+            AiConsultationAnalyzeResponse.NextBestAction nextBestAction
+    ) {
+        if (nextBestAction == null) {
+            return Map.of();
+        }
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("title", nextBestAction.getTitle());
+        value.put("description", nextBestAction.getDescription());
+        return value;
     }
 
     private void saveNextActionCreatedTimeline(
