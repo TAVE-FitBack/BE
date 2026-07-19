@@ -227,7 +227,7 @@ class TaskChecklistServiceTest {
         UUID storeId = UUID.randomUUID();
         Store store = store(storeId);
         LocalDate date = LocalDate.of(2026, 10, 15);
-        Schedule schedule = schedule(
+        Schedule consultationSchedule = schedule(
                 UUID.randomUUID(),
                 store,
                 ScheduleType.CONSULTATION,
@@ -235,33 +235,70 @@ class TaskChecklistServiceTest {
                 "김민지",
                 OffsetDateTime.parse("2026-10-15T10:30:00+09:00")
         );
-        TaskChecklist taskChecklist = taskChecklist(
+        Schedule visitSchedule = schedule(
                 UUID.randomUUID(),
-                schedule,
+                store,
+                ScheduleType.VISIT,
+                "김민지 방문",
+                "김민지",
+                OffsetDateTime.parse("2026-10-15T11:30:00+09:00")
+        );
+        Schedule etcSchedule = schedule(
+                UUID.randomUUID(),
+                store,
+                ScheduleType.ETC,
+                "기타 일정",
+                null,
+                OffsetDateTime.parse("2026-10-15T13:00:00+09:00")
+        );
+        TaskChecklist consultationTask = taskChecklist(
+                UUID.randomUUID(),
+                consultationSchedule,
                 "김민지 상담 10:30",
                 TaskType.CONSULTATION,
                 date,
                 false,
                 null
         );
-
-        when(taskChecklistRepository.findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+        TaskChecklist visitTask = taskChecklist(
+                UUID.randomUUID(),
+                visitSchedule,
+                "김민지 방문 11:30",
+                TaskType.VISIT,
                 date,
-                TaskType.CONSULTATION,
+                true,
+                OffsetDateTime.parse("2026-10-15T11:40:00+09:00")
+        );
+        TaskChecklist etcTask = taskChecklist(
+                UUID.randomUUID(),
+                etcSchedule,
+                "기타 일정 13:00",
+                TaskType.ETC,
+                date,
+                false,
+                null
+        );
+
+        when(taskChecklistRepository.findAllByDateAndStoreIdOrderByScheduleStartAt(
+                date,
                 storeId
-        )).thenReturn(List.of(taskChecklist));
+        )).thenReturn(List.of(consultationTask, visitTask, etcTask));
 
         TaskChecklistListResponse response = taskChecklistService.getTaskChecklists(storeId, date);
 
         assertThat(response.getDate()).isEqualTo(date);
-        assertThat(response.getItems()).hasSize(1);
-        assertThat(response.getItems().get(0).getTaskId()).isEqualTo(taskChecklist.getId());
-        assertThat(response.getItems().get(0).getScheduleId()).isEqualTo(schedule.getId());
-        assertThat(response.getItems().get(0).getTitle()).isEqualTo("김민지 상담 10:30");
-        assertThat(response.getItems().get(0).isDone()).isFalse();
-        verify(taskChecklistRepository).findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+        assertThat(response.getItems()).hasSize(3);
+        assertThat(response.getItems())
+                .extracting(TaskChecklistResponse::getTaskType)
+                .containsExactly(TaskType.CONSULTATION, TaskType.VISIT, TaskType.ETC);
+        assertThat(response.getItems())
+                .extracting(TaskChecklistResponse::getTitle)
+                .containsExactly("김민지 상담 10:30", "김민지 방문 11:30", "기타 일정 13:00");
+        assertThat(response.getItems().get(0).getTaskId()).isEqualTo(consultationTask.getId());
+        assertThat(response.getItems().get(0).getScheduleId()).isEqualTo(consultationSchedule.getId());
+        assertThat(response.getItems().get(1).isDone()).isTrue();
+        verify(taskChecklistRepository).findAllByDateAndStoreIdOrderByScheduleStartAt(
                 date,
-                TaskType.CONSULTATION,
                 storeId
         );
     }

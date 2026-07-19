@@ -1,7 +1,6 @@
 package com.fitback.domain.schedule.repository;
 
 import com.fitback.domain.schedule.entity.TaskChecklist;
-import com.fitback.domain.schedule.enums.TaskType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -30,13 +29,11 @@ public interface TaskChecklistRepository extends JpaRepository<TaskChecklist, UU
             from TaskChecklist tc
             join fetch tc.schedule s
             where tc.dueDate = :date
-              and tc.taskType = :taskType
               and s.store.id = :storeId
             order by s.startAt asc, tc.createdAt asc, tc.id asc
             """)
-    List<TaskChecklist> findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+    List<TaskChecklist> findAllByDateAndStoreIdOrderByScheduleStartAt(
             @Param("date") LocalDate date,
-            @Param("taskType") TaskType taskType,
             @Param("storeId") UUID storeId
     );
 }

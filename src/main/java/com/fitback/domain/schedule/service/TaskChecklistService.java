@@ -37,9 +37,8 @@ public class TaskChecklistService {
         }
 
         List<TaskChecklistResponse> items = taskChecklistRepository
-                .findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+                .findAllByDateAndStoreIdOrderByScheduleStartAt(
                         date,
-                        TaskType.CONSULTATION,
                         storeId
                 )
                 .stream()
