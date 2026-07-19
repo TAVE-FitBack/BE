@@ -143,8 +143,7 @@ public class CustomerService {
         List<NonConversionReason> nonConversionReasons = nonConversionReasonRepository
                 .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
 
-        FollowUp activeFollowUp = followUpRepository
-                .findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING)
+        FollowUp activeFollowUp = followUpRepository.findActiveByCustomerId(customerId)
                 .orElse(null);
 
         FollowUpAiInsight followUpAiInsight = activeFollowUp == null

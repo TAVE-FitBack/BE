@@ -235,7 +235,7 @@ class CustomerServiceTest {
                 .customer(customer)
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 3))
-                .status(FollowUpStatus.PENDING)
+                .status(FollowUpStatus.SENT)
                 .memo("부담 적은 시작 옵션을 안내")
                 .build();
         FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
@@ -278,7 +278,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of(reason));
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.of(followUp));
         when(followUpAiInsightRepository.findById(followUp.getId())).thenReturn(Optional.of(followUpAiInsight));
         when(messageTemplateRepository.findFirstByCustomerIdAndFollowUpIdOrderByGeneratedAtDesc(customerId, followUp.getId()))
@@ -313,6 +313,7 @@ class CustomerServiceTest {
         assertThat(response.getNonConversionReasons()).hasSize(1);
         assertThat(response.getNonConversionReasons().get(0).getReasonType()).isEqualTo("PRICE_BURDEN");
         assertThat(response.getActiveFollowUp().getFollowUpId()).isEqualTo(followUp.getId());
+        assertThat(response.getActiveFollowUp().getStatus()).isEqualTo(FollowUpStatus.SENT);
         assertThat(response.getNextBestAction().getTitle()).isEqualTo("부담 적은 시작 옵션 제안");
         assertThat(response.getNextBestAction().getDescription()).isEqualTo("큰 패키지보다 시작 부담이 낮은 옵션을 안내합니다.");
         assertThat(response.getNextBestAction().getPersuasionPoint()).containsEntry("main", "초기 비용 부담 완화");
@@ -551,7 +552,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.empty());
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(List.of());
@@ -1531,7 +1532,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.empty());
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(List.of());
@@ -1571,7 +1572,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.empty());
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(List.of());
@@ -1610,7 +1611,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.empty());
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(List.of());
@@ -1645,7 +1646,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.empty());
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(List.of());
@@ -1687,7 +1688,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.of(followUp));
         when(followUpAiInsightRepository.findById(followUp.getId())).thenReturn(Optional.empty());
         when(messageTemplateRepository.findFirstByCustomerIdAndFollowUpIdOrderByGeneratedAtDesc(customerId, followUp.getId()))
@@ -2539,7 +2540,7 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.empty());
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(timeline);
