@@ -74,6 +74,7 @@ public class InquiryService {
     private final ConsultationRepository consultationRepository;
     private final ConsultationMaterialRepository consultationMaterialRepository;
     private final ConsultationMaterialFileService consultationMaterialFileService;
+    private final InquirySignalService inquirySignalService;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -402,6 +403,7 @@ public class InquiryService {
                 .build();
 
         Inquiry savedInquiry = inquiryRepository.save(inquiry);
+        inquirySignalService.saveSnapshot(savedInquiry, request.getAiCheckPreview());
         saveInquiryMaterials(savedInquiry, counselor, materials);
 
         return InquiryCreateResponse.builder()

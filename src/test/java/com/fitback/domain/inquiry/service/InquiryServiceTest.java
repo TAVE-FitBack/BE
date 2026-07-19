@@ -14,9 +14,12 @@ import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository
 import com.fitback.domain.store.repository.InflowPathOptionRepository;
 import com.fitback.domain.customer.repository.InterestServiceRepository;
 import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewItemRequest;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.AiCheckSignalKey;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.enums.ConsultationMaterialType;
@@ -115,6 +118,9 @@ class InquiryServiceTest {
     private ConsultationMaterialFileService consultationMaterialFileService;
 
     @Mock
+    private InquirySignalService inquirySignalService;
+
+    @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
     @Mock
@@ -135,6 +141,7 @@ class InquiryServiceTest {
                 consultationRepository,
                 consultationMaterialRepository,
                 consultationMaterialFileService,
+                inquirySignalService,
                 customerActivityTimelineRepository,
                 eventPublisher
         );
@@ -1038,6 +1045,88 @@ class InquiryServiceTest {
         verify(serviceRepository).findByIdAndStoreIdAndActiveTrue(serviceId, storeId);
         verify(inflowPathOptionRepository).findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId);
         verify(userRepository).findByIdAndStore_Id(userId, storeId);
+        verify(inquirySignalService).saveSnapshot(savedInquiry, null);
+    }
+
+    @Test
+    @DisplayName("문의 등록 요청에 aiCheckPreview가 있으면 inquiry 저장 후 inquiry_signal 저장 서비스를 호출한다")
+    void createInquirySavesAiCheckPreviewSnapshot() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID inquiryId = UUID.randomUUID();
+        OffsetDateTime inquiredAt = OffsetDateTime.parse("2026-06-01T13:00:00+09:00");
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("워크인")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        Inquiry savedInquiry = Inquiry.builder()
+                .id(inquiryId)
+                .store(store)
+                .service(service)
+                .user(counselor)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .inquiryStatus(InquiryStatus.RECEIVED)
+                .inquiredAt(inquiredAt)
+                .visitScheduledAt(null)
+                .rawText("문의 원문")
+                .build();
+        AiCheckPreviewSnapshotRequest aiCheckPreview = aiCheckPreviewSnapshot();
+        InquiryCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                InquiryStatus.RECEIVED,
+                inquiredAt,
+                null
+        );
+        ReflectionTestUtils.setField(request, "aiCheckPreview", aiCheckPreview);
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inquiryRepository.save(any(Inquiry.class)))
+                .thenReturn(savedInquiry);
+
+        inquiryService.createInquiry(storeId, request);
+
+        InOrder inOrder = inOrder(inquiryRepository, inquirySignalService);
+        inOrder.verify(inquiryRepository).save(any(Inquiry.class));
+        inOrder.verify(inquirySignalService).saveSnapshot(savedInquiry, aiCheckPreview);
     }
 
     @Test
@@ -1545,6 +1634,41 @@ class InquiryServiceTest {
         ReflectionTestUtils.setField(request, "customer", customer);
         ReflectionTestUtils.setField(request, "inquiry", inquiry);
 
+        return request;
+    }
+
+    private AiCheckPreviewSnapshotRequest aiCheckPreviewSnapshot() {
+        AiCheckPreviewItemRequest interestService = aiCheckPreviewItem(
+                AiCheckSignalKey.INTEREST_SERVICE,
+                "관심 상품",
+                true,
+                "PT"
+        );
+        AiCheckPreviewItemRequest exerciseGoal = aiCheckPreviewItem(
+                AiCheckSignalKey.EXERCISE_GOAL,
+                "운동 목적",
+                false,
+                "아직 확인되지 않음"
+        );
+
+        AiCheckPreviewSnapshotRequest request = new AiCheckPreviewSnapshotRequest();
+        ReflectionTestUtils.setField(request, "confirmedCount", 1);
+        ReflectionTestUtils.setField(request, "totalCount", 2);
+        ReflectionTestUtils.setField(request, "items", List.of(interestService, exerciseGoal));
+        return request;
+    }
+
+    private AiCheckPreviewItemRequest aiCheckPreviewItem(
+            AiCheckSignalKey key,
+            String label,
+            boolean confirmed,
+            String value
+    ) {
+        AiCheckPreviewItemRequest request = new AiCheckPreviewItemRequest();
+        ReflectionTestUtils.setField(request, "key", key);
+        ReflectionTestUtils.setField(request, "label", label);
+        ReflectionTestUtils.setField(request, "confirmed", confirmed);
+        ReflectionTestUtils.setField(request, "value", value);
         return request;
     }
 
