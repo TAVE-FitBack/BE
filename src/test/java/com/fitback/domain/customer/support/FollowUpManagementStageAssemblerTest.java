@@ -45,6 +45,18 @@ class FollowUpManagementStageAssemblerTest {
 
     @Test
     @DisplayName("active follow_up이 없고 최근 CLOSED이면 종료로 반환한다")
+    void assembleSentRoundStage() {
+        FollowUpManagementStageResponse response = assembler.assemble(
+                followUp("SENT", 2),
+                null
+        );
+
+        assertThat(response.getType()).isEqualTo(FollowUpManagementStageType.ROUND);
+        assertThat(response.getContactRound()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("active follow_upì´ ì—†ê³  ìµœê·¼ CLOSEDì´ë©´ ì¢…ë£Œë¡œ ë°˜í™˜í•œë‹¤")
     void assembleClosedStage() {
         FollowUpManagementStageResponse response = assembler.assemble(
                 null,

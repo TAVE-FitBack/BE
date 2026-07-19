@@ -283,7 +283,7 @@ public class CustomerManagementQueryRepository {
                            ) AS row_number
                     FROM follow_up f
                     WHERE f.customer_id IN (:customerIds)
-                      AND f.status = 'PENDING'
+                      AND f.status IN ('PENDING', 'SENT')
                 ) ranked_follow_up
                 WHERE row_number = 1
                 ORDER BY customer_id
@@ -494,7 +494,7 @@ public class CustomerManagementQueryRepository {
                           SELECT 1
                           FROM follow_up pending_f
                           WHERE pending_f.customer_id = c.id
-                            AND pending_f.status = 'PENDING'
+                            AND pending_f.status IN ('PENDING', 'SENT')
                       )
                       AND (
                           SELECT latest_f.status
@@ -516,7 +516,7 @@ public class CustomerManagementQueryRepository {
                           SELECT 1
                           FROM follow_up pending_f
                           WHERE pending_f.customer_id = c.id
-                            AND pending_f.status = 'PENDING'
+                            AND pending_f.status IN ('PENDING', 'SENT')
                       )
                       AND (
                           SELECT latest_f.status
@@ -531,7 +531,7 @@ public class CustomerManagementQueryRepository {
                           SELECT 1
                           FROM follow_up pending_f
                           WHERE pending_f.customer_id = c.id
-                            AND pending_f.status = 'PENDING'
+                            AND pending_f.status IN ('PENDING', 'SENT')
                       )
                       AND (
                           NOT EXISTS (
@@ -581,7 +581,7 @@ public class CustomerManagementQueryRepository {
                       SELECT 1
                       FROM follow_up pending_f
                       WHERE pending_f.customer_id = c.id
-                        AND pending_f.status = 'PENDING'
+                        AND pending_f.status IN ('PENDING', 'SENT')
                         AND pending_f.contact_round = :managementStageContactRound
                   )
                 """);
