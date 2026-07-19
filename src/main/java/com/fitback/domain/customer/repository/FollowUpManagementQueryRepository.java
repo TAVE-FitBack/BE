@@ -27,19 +27,19 @@ public class FollowUpManagementQueryRepository {
         String sql = """
                 SELECT
                     COUNT(*) FILTER (
-                        WHERE f.status = 'PENDING'
+                        WHERE f.status IN ('PENDING', 'SENT')
                           AND f.recommend_contact_date = :today
                     ) AS today_pending_count,
                     COUNT(*) FILTER (
-                        WHERE f.status = 'PENDING'
+                        WHERE f.status IN ('PENDING', 'SENT')
                           AND f.contact_round = 2
                     ) AS second_round_pending_count,
                     COUNT(*) FILTER (
-                        WHERE f.status = 'PENDING'
+                        WHERE f.status IN ('PENDING', 'SENT')
                           AND f.recommend_contact_date < :today
                     ) AS overdue_count,
                     COUNT(*) FILTER (
-                        WHERE f.status = 'PENDING'
+                        WHERE f.status IN ('PENDING', 'SENT')
                           AND f.recommend_contact_date >= :monthStartInclusive
                           AND f.recommend_contact_date < :monthEndExclusive
                     ) AS this_month_pending_count
@@ -139,7 +139,7 @@ public class FollowUpManagementQueryRepository {
                     LIMIT 1
                 ) latest_message ON TRUE
                 WHERE c.store_id = :storeId
-                  AND f.status = 'PENDING'
+                  AND f.status IN ('PENDING', 'SENT')
                 """ + filters + orderBy;
 
         return jdbcTemplate.query(

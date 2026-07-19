@@ -152,6 +152,30 @@ class FollowUpManagementServiceTest {
 
     @Test
     @DisplayName("종료 목록은 페이지 응답과 latestContactAt 기준 항목을 반환한다")
+    void getBoardIncludesSentFollowUpStatus() {
+        UUID storeId = UUID.randomUUID();
+        FollowUpBoardQuery query = new FollowUpBoardQuery();
+        query.setTab("TODAY");
+        when(queryRepository.findBoardRows(eq(storeId), any(), any()))
+                .thenReturn(List.of(boardRow(
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        1,
+                        "sent",
+                        90,
+                        UUID.randomUUID(),
+                        "SENT"
+                )));
+        when(queryRepository.findNonConversionReasons(anyCollection())).thenReturn(List.of());
+
+        FollowUpBoardResponse response = followUpManagementService.getBoard(storeId, query);
+
+        assertThat(response.getColumns().get(0).getItems()).singleElement()
+                .satisfies(item -> assertThat(item.getFollowUpStatus().name()).isEqualTo("SENT"));
+    }
+
+    @Test
+    @DisplayName("ì¢…ë£Œ ëª©ë¡ì€ íŽ˜ì´ì§€ ì‘ë‹µê³¼ latestContactAt ê¸°ì¤€ í•­ëª©ì„ ë°˜í™˜í•œë‹¤")
     void getEndedFollowUps() {
         UUID storeId = UUID.randomUUID();
         UUID customerId = UUID.randomUUID();
@@ -299,6 +323,26 @@ class FollowUpManagementServiceTest {
             Integer priorityScore,
             UUID messageTemplateId
     ) {
+        return boardRow(
+                followUpId,
+                customerId,
+                contactRound,
+                customerName,
+                priorityScore,
+                messageTemplateId,
+                "PENDING"
+        );
+    }
+
+    private BoardRow boardRow(
+            UUID followUpId,
+            UUID customerId,
+            int contactRound,
+            String customerName,
+            Integer priorityScore,
+            UUID messageTemplateId,
+            String followUpStatus
+    ) {
         return new BoardRow(
                 followUpId,
                 customerId,
@@ -307,7 +351,7 @@ class FollowUpManagementServiceTest {
                 "FEMALE",
                 "PT",
                 "PENDING",
-                "PENDING",
+                followUpStatus,
                 contactRound,
                 LocalDate.of(2026, 10, 15),
                 "후속 연락 메모",
