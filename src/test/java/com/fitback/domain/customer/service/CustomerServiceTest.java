@@ -2238,11 +2238,9 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of(reason));
-        when(followUpRepository.findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId))
+        when(followUpRepository.findActiveByCustomerId(customerId))
                 .thenReturn(Optional.of(oldFollowUp));
         when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class))).thenReturn(aiResponse);
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
-                .thenReturn(Optional.of(oldFollowUp));
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
 
         NextActionRegenerateResponse response = customerService.regenerateNextAction(
@@ -2294,9 +2292,9 @@ class CustomerServiceTest {
     }
 
     @Test
-    @DisplayName("다음 최적 액션 재생성은 최근 1차 COMPLETED follow_up 이후 2차 PENDING을 생성한다")
+    @DisplayName("Active 1st round SENT follow-up regenerates as 2nd round PENDING")
     void regenerateNextActionCreatesSecondRoundAfterFirstCompleted() {
-        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 1, null, 2);
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.SENT, 1, 2);
 
         NextActionRegenerateResponse response = customerService.regenerateNextAction(
                 context.storeId(),
@@ -2313,9 +2311,9 @@ class CustomerServiceTest {
     }
 
     @Test
-    @DisplayName("다음 최적 액션 재생성은 최근 2차 COMPLETED follow_up 이후 3차 PENDING을 생성한다")
+    @DisplayName("Active 2nd round SENT follow-up regenerates as 3rd round PENDING")
     void regenerateNextActionCreatesThirdRoundAfterSecondCompleted() {
-        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 2, null, 3);
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.SENT, 2, 3);
 
         NextActionRegenerateResponse response = customerService.regenerateNextAction(
                 context.storeId(),
@@ -2332,9 +2330,9 @@ class CustomerServiceTest {
     }
 
     @Test
-    @DisplayName("다음 최적 액션 재생성은 최근 3차 COMPLETED follow_up 이후 FOLLOW_UP_ROUND_LIMIT_EXCEEDED 예외가 발생한다")
+    @DisplayName("Active 3rd round SENT follow-up cannot regenerate next round")
     void regenerateNextActionRoundLimitExceededAfterThirdCompleted() {
-        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.COMPLETED, 3, null, 3);
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.SENT, 3, 3);
 
         assertThatThrownBy(() -> customerService.regenerateNextAction(
                 context.storeId(),
@@ -2855,9 +2853,8 @@ class CustomerServiceTest {
     }
 
     private RegenerateContext prepareRegenerateContext(
-            FollowUpStatus latestStatus,
-            int latestRound,
-            Integer pendingRound,
+            FollowUpStatus activeStatus,
+            int activeRound,
             int savedRound
     ) {
         UUID storeId = UUID.randomUUID();
@@ -2882,23 +2879,13 @@ class CustomerServiceTest {
                 .priorityScore(70)
                 .analyzedAt(OffsetDateTime.parse("2026-07-01T13:00:00+09:00"))
                 .build();
-        FollowUp latestFollowUp = FollowUp.builder()
+        FollowUp activeFollowUp = FollowUp.builder()
                 .id(UUID.randomUUID())
                 .customer(customer)
                 .consultation(latestConsultation)
                 .recommendContactDate(LocalDate.of(2026, 7, 8))
-                .status(latestStatus)
-                .contactRound(latestRound)
-                .build();
-        FollowUp pendingFollowUp = pendingRound == null
-                ? null
-                : FollowUp.builder()
-                .id(UUID.randomUUID())
-                .customer(customer)
-                .consultation(latestConsultation)
-                .recommendContactDate(LocalDate.of(2026, 7, 8))
-                .status(FollowUpStatus.PENDING)
-                .contactRound(pendingRound)
+                .status(activeStatus)
+                .contactRound(activeRound)
                 .build();
         FollowUp savedFollowUp = FollowUp.builder()
                 .id(savedFollowUpId)
@@ -2916,15 +2903,13 @@ class CustomerServiceTest {
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of());
-        when(followUpRepository.findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId))
-                .thenReturn(Optional.of(latestFollowUp));
+        when(followUpRepository.findActiveByCustomerId(customerId))
+                .thenReturn(Optional.of(activeFollowUp));
 
-        boolean roundLimitExceeded = latestStatus == FollowUpStatus.COMPLETED && latestRound >= 3;
+        boolean roundLimitExceeded = activeStatus == FollowUpStatus.SENT && activeRound >= 3;
         if (!roundLimitExceeded) {
             when(aiConsultationClient.regenerateNextAction(any(AiNextActionRegenerateRequest.class)))
                     .thenReturn(nextActionAiResponse());
-            when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
-                    .thenReturn(Optional.ofNullable(pendingFollowUp));
             when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
         }
 
