@@ -198,6 +198,39 @@ class TaskChecklistServiceTest {
     }
 
     @Test
+    @DisplayName("방문 일정이 기타 일정으로 변경되면 연결 체크리스트를 기타 유형으로 동기화한다")
+    void syncChecklistWhenVisitChangedToEtc() {
+        UUID scheduleId = UUID.randomUUID();
+        Schedule schedule = schedule(
+                scheduleId,
+                store(UUID.randomUUID()),
+                ScheduleType.ETC,
+                "기타 일정",
+                null,
+                OffsetDateTime.parse("2026-10-18T16:00:00+09:00")
+        );
+        TaskChecklist taskChecklist = taskChecklist(
+                UUID.randomUUID(),
+                schedule,
+                "김민지 방문 11:30",
+                TaskType.VISIT,
+                LocalDate.of(2026, 10, 15),
+                false,
+                null
+        );
+
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.of(taskChecklist));
+
+        taskChecklistService.syncForUpdatedSchedule(schedule);
+
+        assertThat(taskChecklist.getTitle()).isEqualTo("기타 일정 16:00");
+        assertThat(taskChecklist.getTaskType()).isEqualTo(TaskType.ETC);
+        assertThat(taskChecklist.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 18));
+        verify(taskChecklistRepository, never()).deleteBySchedule_Id(scheduleId);
+        verify(taskChecklistRepository, never()).save(org.mockito.ArgumentMatchers.any(TaskChecklist.class));
+    }
+
+    @Test
     @DisplayName("방문 일정이 상담 일정으로 변경되면 체크리스트를 새로 생성한다")
     void createChecklistWhenVisitChangedToConsultation() {
         UUID scheduleId = UUID.randomUUID();
