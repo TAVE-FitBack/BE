@@ -153,8 +153,12 @@ public class CustomerDetailResponse {
         private CustomerActivityType activityType;
         private String title;
         private String description;
+        private String summary;
         private ActivityRelatedType relatedType;
         private UUID relatedId;
+        private Map<String, Object> beforeValue;
+        private Map<String, Object> afterValue;
         private OffsetDateTime occurredAt;
+        private Map<String, Object> detail;
     }
 }
