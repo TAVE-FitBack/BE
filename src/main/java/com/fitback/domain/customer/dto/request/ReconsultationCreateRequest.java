@@ -38,13 +38,5 @@ public class ReconsultationCreateRequest {
 
         @NotBlank(message = "상담 내용은 필수입니다.")
         private String rawText;
-
-        private String visitPurpose;
-
-        private String experienceNote;
-
-        private String positiveSignal;
-
-        private String extraNote;
     }
 }

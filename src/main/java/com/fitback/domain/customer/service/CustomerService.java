@@ -433,10 +433,6 @@ public class CustomerService {
                 .stage(ConsultationStage.CONSULTATION)
                 .sourceType(ConsultationSourceType.DIRECT)
                 .rawText(request.getConsultation().getRawText())
-                .visitPurpose(request.getConsultation().getVisitPurpose())
-                .experienceNote(request.getConsultation().getExperienceNote())
-                .positiveSignal(request.getConsultation().getPositiveSignal())
-                .extraNote(request.getConsultation().getExtraNote())
                 .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
                 .build();
 

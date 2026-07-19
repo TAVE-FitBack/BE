@@ -71,18 +71,6 @@ public class Consultation extends BaseTimeEntity {
     @Column(name = "raw_text", nullable = false, columnDefinition = "text")
     private String rawText;
 
-    @Column(name = "visit_purpose", columnDefinition = "text")
-    private String visitPurpose;
-
-    @Column(name = "experience_note", columnDefinition = "text")
-    private String experienceNote;
-
-    @Column(name = "positive_signal", columnDefinition = "text")
-    private String positiveSignal;
-
-    @Column(name = "extra_note", columnDefinition = "text")
-    private String extraNote;
-
     @Column(name = "ai_parsed_at")
     private OffsetDateTime aiParsedAt;
 

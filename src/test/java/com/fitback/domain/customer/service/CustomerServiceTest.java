@@ -1465,10 +1465,6 @@ class CustomerServiceTest {
                     .stage(unsaved.getStage())
                     .sourceType(unsaved.getSourceType())
                     .rawText(unsaved.getRawText())
-                    .visitPurpose(unsaved.getVisitPurpose())
-                    .experienceNote(unsaved.getExperienceNote())
-                    .positiveSignal(unsaved.getPositiveSignal())
-                    .extraNote(unsaved.getExtraNote())
                     .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
                     .build();
         });
@@ -1492,10 +1488,6 @@ class CustomerServiceTest {
                         && consultation.getStage() == ConsultationStage.CONSULTATION
                         && consultation.getSourceType() == ConsultationSourceType.DIRECT
                         && "재상담 원문".equals(consultation.getRawText())
-                        && "체중 감량".equals(consultation.getVisitPurpose())
-                        && "PT 경험 없음".equals(consultation.getExperienceNote())
-                        && "단기권 관심".equals(consultation.getPositiveSignal())
-                        && "가격 안내 필요".equals(consultation.getExtraNote())
                         && consultation.getAiAnalysisStatus() == AiAnalysisStatus.PROCESSING
         ));
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
@@ -1571,10 +1563,6 @@ class CustomerServiceTest {
                     .stage(unsaved.getStage())
                     .sourceType(unsaved.getSourceType())
                     .rawText(unsaved.getRawText())
-                    .visitPurpose(unsaved.getVisitPurpose())
-                    .experienceNote(unsaved.getExperienceNote())
-                    .positiveSignal(unsaved.getPositiveSignal())
-                    .extraNote(unsaved.getExtraNote())
                     .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
                     .build();
         });
@@ -2322,10 +2310,6 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(consultation, "consultedAt", consultedAt);
         ReflectionTestUtils.setField(consultation, "userId", counselorId);
         ReflectionTestUtils.setField(consultation, "rawText", rawText);
-        ReflectionTestUtils.setField(consultation, "visitPurpose", "체중 감량");
-        ReflectionTestUtils.setField(consultation, "experienceNote", "PT 경험 없음");
-        ReflectionTestUtils.setField(consultation, "positiveSignal", "단기권 관심");
-        ReflectionTestUtils.setField(consultation, "extraNote", "가격 안내 필요");
         ReflectionTestUtils.setField(request, "consultation", consultation);
         ReflectionTestUtils.setField(request, "registrationStatus", registrationStatus);
         ReflectionTestUtils.setField(request, "registeredServiceId", registeredServiceId);
