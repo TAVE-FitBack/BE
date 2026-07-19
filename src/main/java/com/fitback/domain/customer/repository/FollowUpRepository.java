@@ -13,6 +13,8 @@ import java.util.UUID;
 
 public interface FollowUpRepository extends JpaRepository<FollowUp, UUID> {
 
+    List<FollowUpStatus> ACTIVE_STATUSES = List.of(FollowUpStatus.PENDING, FollowUpStatus.SENT);
+
     Optional<FollowUp> findByIdAndCustomer_Store_Id(UUID id, UUID storeId);
 
     Optional<FollowUp> findFirstByCustomerIdOrderByCreatedAtDescIdDesc(UUID customerId);
@@ -20,6 +22,18 @@ public interface FollowUpRepository extends JpaRepository<FollowUp, UUID> {
     Optional<FollowUp> findFirstByCustomerIdAndStatusOrderByCreatedAtDescIdDesc(UUID customerId, FollowUpStatus status);
 
     Optional<FollowUp> findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(UUID customerId, FollowUpStatus status);
+
+    Optional<FollowUp> findFirstByCustomerIdAndStatusInOrderByUpdatedAtDescCreatedAtDescIdDesc(
+            UUID customerId,
+            Collection<FollowUpStatus> statuses
+    );
+
+    default Optional<FollowUp> findActiveByCustomerId(UUID customerId) {
+        return findFirstByCustomerIdAndStatusInOrderByUpdatedAtDescCreatedAtDescIdDesc(
+                customerId,
+                ACTIVE_STATUSES
+        );
+    }
 
     @Query("""
             select f
