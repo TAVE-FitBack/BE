@@ -21,6 +21,7 @@ import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
+import com.fitback.domain.consultation.service.ConsultationSignalService;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
@@ -75,6 +76,7 @@ public class InquiryService {
     private final ConsultationMaterialRepository consultationMaterialRepository;
     private final ConsultationMaterialFileService consultationMaterialFileService;
     private final InquirySignalService inquirySignalService;
+    private final ConsultationSignalService consultationSignalService;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -201,6 +203,7 @@ public class InquiryService {
         Inquiry inquiry = loadInquiryForConversion(storeId, inquiryId);
         try {
             InquiryConversionContext context = resolveCustomerConversion(inquiry);
+            consultationSignalService.copyFromInquiry(inquiry, context.consultation());
             OffsetDateTime convertedAt = OffsetDateTime.now();
 
             inquiry.markConverted(context.customer(), context.consultation(), convertedAt);

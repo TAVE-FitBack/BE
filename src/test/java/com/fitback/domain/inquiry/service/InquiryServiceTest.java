@@ -27,6 +27,7 @@ import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
+import com.fitback.domain.consultation.service.ConsultationSignalService;
 import com.fitback.domain.inquiry.client.AiInquiryClient;
 import com.fitback.domain.inquiry.dto.request.AiInquiryCheckPreviewRequest;
 import com.fitback.domain.inquiry.dto.request.InquiryCheckPreviewRequest;
@@ -121,6 +122,9 @@ class InquiryServiceTest {
     private InquirySignalService inquirySignalService;
 
     @Mock
+    private ConsultationSignalService consultationSignalService;
+
+    @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
 
     @Mock
@@ -142,6 +146,7 @@ class InquiryServiceTest {
                 consultationMaterialRepository,
                 consultationMaterialFileService,
                 inquirySignalService,
+                consultationSignalService,
                 customerActivityTimelineRepository,
                 eventPublisher
         );
@@ -827,7 +832,13 @@ class InquiryServiceTest {
                 .containsEntry("customerId", customerId)
                 .containsEntry("consultationId", consultationId)
                 .containsEntry("sessionNo", 1);
-        InOrder inOrder = inOrder(consultationMaterialRepository, consultationRepository, eventPublisher);
+        InOrder inOrder = inOrder(
+                consultationSignalService,
+                consultationMaterialRepository,
+                consultationRepository,
+                eventPublisher
+        );
+        inOrder.verify(consultationSignalService).copyFromInquiry(inquiry, consultation);
         inOrder.verify(consultationMaterialRepository).findAllByInquiryIdOrderByCreatedAtAsc(inquiryId);
         inOrder.verify(consultationRepository).flush();
         inOrder.verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(consultationId));
