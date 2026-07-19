@@ -8,6 +8,7 @@ import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateRespon
 import com.fitback.domain.consultation.exception.ConsultationErrorCode;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
+import com.fitback.domain.consultation.entity.ConsultationSignal;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
@@ -124,6 +125,9 @@ public class CustomerService {
         Consultation latestConsultation = consultationRepository
                 .findFirstByCustomerIdOrderBySessionNoDesc(customerId)
                 .orElse(null);
+        List<ConsultationSignal> consultationSignals = latestConsultation == null
+                ? List.of()
+                : consultationSignalService.findCustomerDetailCardSignals(latestConsultation.getId());
 
         CustomerAiInsight aiInsight = customerAiInsightRepository
                 .findById(customerId)
@@ -153,6 +157,7 @@ public class CustomerService {
                 .customer(toCustomerInfo(customer))
                 .latestConsultation(toLatestConsultation(latestConsultation))
                 .aiAnalysisStatus(resolveAiAnalysisStatus(latestConsultation))
+                .consultationSignalSnapshot(toConsultationSignalSnapshot(latestConsultation, consultationSignals))
                 .aiInsight(toAiInsight(aiInsight))
                 .nonConversionReasons(toNonConversionReasonInfos(nonConversionReasons))
                 .activeFollowUp(toActiveFollowUp(activeFollowUp))
@@ -1173,6 +1178,25 @@ public class CustomerService {
 
     private AiAnalysisStatus resolveAiAnalysisStatus(Consultation consultation) {
         return consultation != null ? consultation.getAiAnalysisStatus() : null;
+    }
+
+    private CustomerDetailResponse.ConsultationSignalSnapshot toConsultationSignalSnapshot(
+            Consultation consultation,
+            List<ConsultationSignal> signals
+    ) {
+        List<ConsultationSignal> safeSignals = signals == null ? List.of() : signals;
+
+        return CustomerDetailResponse.ConsultationSignalSnapshot.builder()
+                .consultationId(consultation == null ? null : consultation.getId())
+                .items(safeSignals.stream()
+                        .map(signal -> CustomerDetailResponse.ConsultationSignalItem.builder()
+                                .key(signal.getSignalKey())
+                                .label(signal.getLabel())
+                                .confirmed(signal.getConfirmed())
+                                .value(signal.getValue())
+                                .build())
+                        .toList())
+                .build();
     }
 
     private CustomerDetailResponse.AiInsight toAiInsight(CustomerAiInsight aiInsight) {

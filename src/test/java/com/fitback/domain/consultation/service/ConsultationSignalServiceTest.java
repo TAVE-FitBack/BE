@@ -40,6 +40,68 @@ class ConsultationSignalServiceTest {
     private ConsultationSignalService consultationSignalService;
 
     @Test
+    void findCustomerDetailCardSignalsReturnsOnlyCardKeysInCardOrder() {
+        UUID consultationId = UUID.randomUUID();
+        Consultation consultation = Consultation.builder()
+                .id(consultationId)
+                .build();
+        ConsultationSignal interestService = consultationSignal(
+                consultation,
+                AiCheckSignalKey.INTEREST_SERVICE,
+                "관심 상품",
+                true,
+                "PT"
+        );
+        ConsultationSignal exerciseGoal = consultationSignal(
+                consultation,
+                AiCheckSignalKey.EXERCISE_GOAL,
+                "운동 목적",
+                true,
+                "체중 감량"
+        );
+        ConsultationSignal customerRequest = consultationSignal(
+                consultation,
+                AiCheckSignalKey.CUSTOMER_REQUEST,
+                "고객 요청",
+                true,
+                "저녁 시간 희망"
+        );
+        ConsultationSignal injuryHistory = consultationSignal(
+                consultation,
+                AiCheckSignalKey.INJURY_HISTORY,
+                "부상 경험",
+                false,
+                "아직 확인되지 않음"
+        );
+        ConsultationSignal exerciseExperience = consultationSignal(
+                consultation,
+                AiCheckSignalKey.EXERCISE_EXPERIENCE,
+                "운동 경험",
+                true,
+                "헬스 6개월"
+        );
+        when(consultationSignalRepository.findByConsultationIdOrderByDisplayOrderAsc(consultationId))
+                .thenReturn(List.of(
+                        interestService,
+                        exerciseGoal,
+                        exerciseExperience,
+                        injuryHistory,
+                        customerRequest
+                ));
+
+        List<ConsultationSignal> result = consultationSignalService.findCustomerDetailCardSignals(consultationId);
+
+        assertThat(result)
+                .extracting(ConsultationSignal::getSignalKey)
+                .containsExactly(
+                        AiCheckSignalKey.EXERCISE_GOAL,
+                        AiCheckSignalKey.INJURY_HISTORY,
+                        AiCheckSignalKey.INTEREST_SERVICE,
+                        AiCheckSignalKey.EXERCISE_EXPERIENCE
+                );
+    }
+
+    @Test
     void saveSnapshotReturnsEmptyWhenSnapshotIsNull() {
         Consultation consultation = Consultation.builder()
                 .id(UUID.randomUUID())
@@ -177,6 +239,23 @@ class ConsultationSignalServiceTest {
     ) {
         return InquirySignal.builder()
                 .inquiry(inquiry)
+                .signalKey(key)
+                .label(label)
+                .confirmed(confirmed)
+                .value(value)
+                .displayOrder(key.getDisplayOrder())
+                .build();
+    }
+
+    private ConsultationSignal consultationSignal(
+            Consultation consultation,
+            AiCheckSignalKey key,
+            String label,
+            boolean confirmed,
+            String value
+    ) {
+        return ConsultationSignal.builder()
+                .consultation(consultation)
                 .signalKey(key)
                 .label(label)
                 .confirmed(confirmed)
