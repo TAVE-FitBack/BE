@@ -1,5 +1,6 @@
 package com.fitback.domain.inquiry.dto.request;
 
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
@@ -24,6 +25,9 @@ public class InquiryCreateRequest {
     @Valid
     @NotNull(message = "문의 정보는 필수입니다.")
     private InquiryInfo inquiry;
+
+    @Valid
+    private AiCheckPreviewSnapshotRequest aiCheckPreview;
 
     @Getter
     @NoArgsConstructor

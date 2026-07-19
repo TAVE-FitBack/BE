@@ -1,6 +1,7 @@
 package com.fitback.domain.customer.dto.request;
 
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -22,6 +23,9 @@ public class ReconsultationCreateRequest {
     private ConsultationRegistrationStatus registrationStatus;
 
     private UUID registeredServiceId;
+
+    @Valid
+    private AiCheckPreviewSnapshotRequest aiCheckPreview;
 
     @Getter
     @NoArgsConstructor

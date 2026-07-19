@@ -25,6 +25,9 @@ public class ConsultationCreateRequest {
     @NotNull(message = "상담 정보는 필수입니다.")
     private ConsultationInfo consultation;
 
+    @Valid
+    private AiCheckPreviewSnapshotRequest aiCheckPreview;
+
     @Getter
     @NoArgsConstructor
     public static class CustomerInfo {
