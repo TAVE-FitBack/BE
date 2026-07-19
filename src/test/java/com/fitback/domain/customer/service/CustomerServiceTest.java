@@ -1210,11 +1210,11 @@ class CustomerServiceTest {
         assertThat(response.getDeliveryStatus().name()).isEqualTo("SENT");
         assertThat(response.getSentAt()).isEqualTo(sentAt);
         assertThat(response.getFollowUpId()).isEqualTo(followUp.getId());
-        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.SENT);
         assertThat(response.getContactRound()).isEqualTo(2);
         assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
         assertThat(messageTemplate.getSentAt()).isEqualTo(sentAt);
-        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.SENT);
         assertThat(followUp.getContactRound()).isEqualTo(2);
 
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
@@ -1237,7 +1237,62 @@ class CustomerServiceTest {
     }
 
     @Test
-    @DisplayName("등록 완료 고객 메시지 전송 완료는 연결된 follow_up을 CLOSED 처리하고 contactRound를 유지한다")
+    @DisplayName("Third round message sent completes follow-up")
+    void markThirdRoundMessageTemplateSentCompletesFollowUp() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        OffsetDateTime sentAt = OffsetDateTime.parse("2026-07-08T15:20:00+09:00");
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "ë¬¸í˜•ì£¼");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                actorUser,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(3)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(sentAt)
+        );
+
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(response.getContactRound()).isEqualTo(3);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.COMPLETED);
+        assertThat(followUp.getContactRound()).isEqualTo(3);
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
+        assertThat(messageTemplate.getSentAt()).isEqualTo(sentAt);
+        verify(customerActivityTimelineRepository).save(any(CustomerActivityTimeline.class));
+        verifyNoInteractions(aiConsultationClient, aiMessageClient, followUpRepository);
+    }
+
+    @Test
+    @DisplayName("Registered customer message sent closes follow-up")
     void markMessageTemplateSentRegisteredCustomerClosesFollowUp() {
         UUID storeId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();

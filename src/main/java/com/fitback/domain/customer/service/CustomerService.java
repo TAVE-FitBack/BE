@@ -344,7 +344,7 @@ public class CustomerService {
         if (customer.getStatus() == CustomerStatus.REGISTERED || customer.getStatus() == CustomerStatus.LOST) {
             followUp.markClosed();
         } else {
-            followUp.markCompleted();
+            markFollowUpSentOrCompleted(followUp);
         }
         saveMessageSentTimeline(customer, actorUser, messageTemplate, beforeDeliveryStatus);
 
@@ -356,6 +356,14 @@ public class CustomerService {
                 .followUpStatus(followUp.getStatus())
                 .contactRound(followUp.getContactRound())
                 .build();
+    }
+
+    private void markFollowUpSentOrCompleted(FollowUp followUp) {
+        if (followUp.getContactRound() >= 3) {
+            followUp.markCompleted();
+            return;
+        }
+        followUp.markSent();
     }
 
     public Map<String, Object> checkReconsultationPreview(
