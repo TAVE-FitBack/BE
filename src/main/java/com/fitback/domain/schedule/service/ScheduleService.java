@@ -121,6 +121,7 @@ public class ScheduleService {
         Schedule schedule = scheduleRepository.findByIdAndStore_Id(scheduleId, storeId)
                 .orElseThrow(() -> new BusinessException(ScheduleErrorCode.SCHEDULE_NOT_FOUND));
 
+        taskChecklistService.deleteBySchedule(schedule);
         scheduleRepository.delete(schedule);
     }
 
