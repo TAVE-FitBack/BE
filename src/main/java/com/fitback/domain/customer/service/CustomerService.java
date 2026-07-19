@@ -1441,23 +1441,27 @@ public class CustomerService {
             Map<UUID, FollowUpAiInsight> followUpAiInsightsById,
             Map<UUID, Inquiry> inquiriesById
     ) {
+        UUID consultationId = resolveRelatedId(item, "consultationId");
+        UUID messageTemplateId = resolveRelatedId(item, "messageTemplateId");
+        UUID followUpId = resolveRelatedId(item, "followUpId");
+
         return switch (item.getActivityType()) {
             case CONSULTATION_CREATED, RECONSULTATION_CREATED -> buildConsultationTimelineDetail(
                     item,
-                    consultationsById.get(item.getRelatedId())
+                    consultationsById.get(consultationId)
             );
             case MESSAGE_TEMPLATE_CREATED, MESSAGE_SENT -> buildMessageTemplateTimelineDetail(
                     item,
-                    messageTemplatesById.get(item.getRelatedId())
+                    messageTemplatesById.get(messageTemplateId)
             );
             case AI_ANALYSIS_COMPLETED, AI_ANALYSIS_FAILED -> buildAiAnalysisTimelineDetail(
                     item,
-                    consultationsById.get(item.getRelatedId())
+                    consultationsById.get(consultationId)
             );
             case NEXT_ACTION_CREATED, NEXT_ACTION_REGENERATED, FOLLOW_UP_CREATED, FOLLOW_UP_COMPLETED -> buildFollowUpTimelineDetail(
                     item,
-                    followUpsById.get(item.getRelatedId()),
-                    followUpAiInsightsById.get(item.getRelatedId())
+                    followUpsById.get(followUpId),
+                    followUpAiInsightsById.get(followUpId)
             );
             case CUSTOMER_STATUS_CHANGED -> buildStatusChangeTimelineDetail(item);
             case INQUIRY_CONVERTED_TO_CONSULTATION -> buildInquiryConversionTimelineDetail(
@@ -1468,9 +1472,16 @@ public class CustomerService {
             case AI_ANALYSIS_MANUALLY_UPDATED -> buildAiAnalysisTimelineDetail(item, null);
             case MESSAGE_TEMPLATE_COPIED -> buildMessageTemplateTimelineDetail(
                     item,
-                    messageTemplatesById.get(item.getRelatedId())
+                    messageTemplatesById.get(messageTemplateId)
             );
         };
+    }
+
+    private UUID resolveRelatedId(CustomerActivityTimeline item, String afterValueKey) {
+        if (item.getRelatedId() != null) {
+            return item.getRelatedId();
+        }
+        return getUuidValue(item.getAfterValue(), afterValueKey);
     }
 
     private Map<String, Object> buildConsultationTimelineDetail(
