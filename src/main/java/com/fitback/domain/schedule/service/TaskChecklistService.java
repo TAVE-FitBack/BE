@@ -147,6 +147,14 @@ public class TaskChecklistService {
         return schedule.getStartAt().toLocalDate();
     }
 
+    private TaskType toTaskType(ScheduleType scheduleType) {
+        return switch (scheduleType) {
+            case CONSULTATION -> TaskType.CONSULTATION;
+            case VISIT -> TaskType.VISIT;
+            case ETC -> TaskType.ETC;
+        };
+    }
+
     private String normalizeBlankToNull(String value) {
         if (value == null) {
             return null;
