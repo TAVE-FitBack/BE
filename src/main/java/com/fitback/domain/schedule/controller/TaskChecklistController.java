@@ -28,13 +28,13 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/task-checklists")
 @RequiredArgsConstructor
-@Tag(name = "Task Checklist", description = "상담 일정 체크리스트 API")
+@Tag(name = "Task Checklist", description = "스케줄러 할일 체크리스트 API")
 public class TaskChecklistController {
 
     private final TaskChecklistService taskChecklistService;
 
     @GetMapping
-    @Operation(summary = "상담 일정 체크리스트 조회", description = "선택 날짜의 상담 일정 체크리스트를 조회합니다.")
+    @Operation(summary = "일정 체크리스트 조회", description = "선택 날짜의 상담/방문/기타 일정 체크리스트를 조회합니다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당 또는 잘못된 날짜"),
@@ -51,7 +51,7 @@ public class TaskChecklistController {
     }
 
     @PatchMapping("/{taskId}")
-    @Operation(summary = "상담 일정 체크리스트 완료/해제", description = "체크리스트의 완료 또는 해제 상태를 변경합니다.")
+    @Operation(summary = "일정 체크리스트 완료/해제", description = "체크리스트의 완료 또는 해제 상태를 변경합니다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "수정 성공"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "매장 미할당 또는 잘못된 요청값"),
