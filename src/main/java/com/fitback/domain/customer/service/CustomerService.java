@@ -1628,11 +1628,95 @@ public class CustomerService {
             CustomerActivityTimeline item,
             Map<String, Object> detail
     ) {
+        String summary = switch (item.getActivityType()) {
+            case CONSULTATION_CREATED, RECONSULTATION_CREATED -> getStringValue(detail, "body");
+            case MESSAGE_TEMPLATE_CREATED, MESSAGE_SENT, MESSAGE_TEMPLATE_COPIED -> getStringValue(detail, "body");
+            case CUSTOMER_STATUS_CHANGED -> buildStatusChangeSummary(item);
+            case AI_ANALYSIS_COMPLETED, AI_ANALYSIS_FAILED, AI_ANALYSIS_MANUALLY_UPDATED ->
+                    buildAiAnalysisSummary(item);
+            case NEXT_ACTION_CREATED, NEXT_ACTION_REGENERATED, FOLLOW_UP_CREATED, FOLLOW_UP_COMPLETED ->
+                    buildFollowUpSummary(item, detail);
+            case INQUIRY_CONVERTED_TO_CONSULTATION -> buildInquiryConversionSummary(item);
+        };
+        if (summary != null && !summary.isBlank()) {
+            return abbreviate(summary);
+        }
         Object body = detail.get("body");
         if (body instanceof String bodyText && !bodyText.isBlank()) {
             return abbreviate(bodyText);
         }
         return abbreviate(item.getDescription());
+    }
+
+    private String buildStatusChangeSummary(CustomerActivityTimeline item) {
+        String beforeStatus = getDisplayValue(item.getBeforeValue(), "status");
+        String afterStatus = getDisplayValue(item.getAfterValue(), "status");
+        if (beforeStatus != null && afterStatus != null) {
+            return beforeStatus + " >> " + afterStatus;
+        }
+        return null;
+    }
+
+    private String buildAiAnalysisSummary(CustomerActivityTimeline item) {
+        String leadTemperature = getDisplayValue(item.getAfterValue(), "leadTemperature");
+        String priorityScore = getDisplayValue(item.getAfterValue(), "priorityScore");
+        String primaryReasonType = getDisplayValue(item.getAfterValue(), "primaryReasonType");
+        String status = getDisplayValue(item.getAfterValue(), "status");
+        String errorCode = getDisplayValue(item.getAfterValue(), "errorCode");
+
+        if (leadTemperature != null || priorityScore != null || primaryReasonType != null) {
+            List<String> parts = new java.util.ArrayList<>();
+            if (leadTemperature != null) {
+                parts.add("온도 " + leadTemperature);
+            }
+            if (priorityScore != null) {
+                parts.add("점수 " + priorityScore);
+            }
+            if (primaryReasonType != null) {
+                parts.add("주요 사유 " + primaryReasonType);
+            }
+            return String.join(" · ", parts);
+        }
+        if (status != null || errorCode != null) {
+            return String.join(
+                    " · ",
+                    java.util.stream.Stream.of(status, errorCode)
+                            .filter(value -> value != null && !value.isBlank())
+                            .toList()
+            );
+        }
+        return null;
+    }
+
+    private String buildFollowUpSummary(
+            CustomerActivityTimeline item,
+            Map<String, Object> detail
+    ) {
+        String nextActionTitle = getStringValue(detail, "nextActionTitle");
+        if (nextActionTitle != null && !nextActionTitle.isBlank()) {
+            return nextActionTitle;
+        }
+        String memo = getStringValue(detail, "memo");
+        if (memo != null && !memo.isBlank()) {
+            return memo;
+        }
+        return getDisplayValue(item.getAfterValue(), "nextActionTitle");
+    }
+
+    private String buildInquiryConversionSummary(CustomerActivityTimeline item) {
+        Boolean newCustomerCreated = getBooleanValue(item.getAfterValue(), "newCustomerCreated");
+        String sessionNo = getDisplayValue(item.getAfterValue(), "sessionNo");
+        if (newCustomerCreated != null && sessionNo != null) {
+            String customerType = newCustomerCreated ? "신규 고객 생성" : "기존 고객 연결";
+            return customerType + " · " + sessionNo + "회차 상담 생성";
+        }
+        if (newCustomerCreated != null) {
+            return newCustomerCreated ? "신규 고객 생성" : "기존 고객 연결";
+        }
+        if (sessionNo != null) {
+            return sessionNo + "회차 상담 생성";
+        }
+        return null;
     }
 
     private String abbreviate(String value) {
@@ -1659,6 +1743,27 @@ public class CustomerService {
             return null;
         }
         return values.get(key);
+    }
+
+    private String getDisplayValue(Map<String, Object> values, String key) {
+        Object value = getValue(values, key);
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private Boolean getBooleanValue(Map<String, Object> values, String key) {
+        Object value = getValue(values, key);
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        if (value instanceof String stringValue) {
+            if ("true".equalsIgnoreCase(stringValue)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(stringValue)) {
+                return false;
+            }
+        }
+        return null;
     }
 
     private UUID getUuidValue(Map<String, Object> values, String key) {
