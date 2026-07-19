@@ -6,6 +6,7 @@ import com.fitback.domain.service.dto.response.ServiceResponse;
 import com.fitback.domain.service.service.ServiceService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,7 @@ public class ServiceController {
     @GetMapping
     @Operation(summary = "서비스 목록 조회")
     public ResponseEntity<ApiResponse<List<ServiceResponse>>> getServices(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId
     ) {
         return ResponseEntity.ok(ApiResponse.onSuccess(serviceService.getServices(userId)));
     }
@@ -36,7 +37,7 @@ public class ServiceController {
     @PostMapping
     @Operation(summary = "서비스 등록")
     public ResponseEntity<ApiResponse<ServiceResponse>> createService(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
             @Valid @RequestBody ServiceCreateRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -49,8 +50,8 @@ public class ServiceController {
     @PutMapping("/{serviceId}")
     @Operation(summary = "서비스 수정")
     public ResponseEntity<ApiResponse<ServiceResponse>> updateService(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID serviceId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Service ID") @PathVariable UUID serviceId,
             @Valid @RequestBody ServiceUpdateRequest request
     ) {
         return ResponseEntity.ok(ApiResponse.onSuccess(
@@ -62,8 +63,8 @@ public class ServiceController {
     @DeleteMapping("/{serviceId}")
     @Operation(summary = "서비스 삭제")
     public ResponseEntity<ApiResponse<Void>> deleteService(
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID serviceId
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Service ID") @PathVariable UUID serviceId
     ) {
         serviceService.deleteService(userId, serviceId);
         return ResponseEntity.ok(ApiResponse.onSuccess("서비스가 삭제되었습니다.", null));

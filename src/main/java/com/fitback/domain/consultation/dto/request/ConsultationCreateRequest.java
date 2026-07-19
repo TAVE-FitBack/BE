@@ -3,6 +3,7 @@ package com.fitback.domain.consultation.dto.request;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -62,6 +63,11 @@ public class ConsultationCreateRequest {
         private OffsetDateTime consultedAt;
 
         @NotNull(message = "등록 상태는 필수입니다.")
+        @Schema(
+                description = "Registration status selected after consultation",
+                allowableValues = {"REGISTERED", "PENDING", "SCHEDULED", "LOST"},
+                example = "REGISTERED"
+        )
         private ConsultationRegistrationStatus registrationStatus;
 
         @NotNull(message = "상담자는 필수입니다.")

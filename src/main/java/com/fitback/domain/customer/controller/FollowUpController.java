@@ -5,6 +5,7 @@ import com.fitback.domain.customer.dto.response.FollowUpReplyUpdateResponse;
 import com.fitback.domain.customer.service.CustomerService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,8 +30,8 @@ public class FollowUpController {
     @PatchMapping("/{followUpId}/reply")
     @Operation(summary = "답장 유무 변경", description = "후속 연락의 답장 유무를 수동으로 변경합니다.")
     public ResponseEntity<ApiResponse<FollowUpReplyUpdateResponse>> updateReply(
-            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
-            @PathVariable UUID followUpId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Parameter(description = "Follow-up ID") @PathVariable UUID followUpId,
             @Valid @RequestBody FollowUpReplyUpdateRequest request
     ) {
         FollowUpReplyUpdateResponse response = customerService.updateFollowUpReply(storeId, followUpId, request);

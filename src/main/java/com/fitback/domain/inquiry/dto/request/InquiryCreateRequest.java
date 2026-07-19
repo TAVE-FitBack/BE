@@ -4,6 +4,7 @@ import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest
 import com.fitback.domain.customer.enums.Gender;
 import com.fitback.domain.customer.enums.PreferredContactChannel;
 import com.fitback.domain.inquiry.enums.InquiryStatus;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -63,6 +64,11 @@ public class InquiryCreateRequest {
         private UUID userId;
 
         @NotNull(message = "문의 상태는 필수입니다.")
+        @Schema(
+                description = "Inquiry status. CONVERTED is not allowed as an input value",
+                allowableValues = {"RECEIVED", "VISIT_SCHEDULED", "VISIT_CANCELED"},
+                example = "RECEIVED"
+        )
         private InquiryStatus inquiryStatus;
 
         @NotNull(message = "문의 일시는 필수입니다.")

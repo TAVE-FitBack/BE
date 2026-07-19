@@ -10,6 +10,7 @@ import com.fitback.domain.auth.dto.response.TokenRefreshResponse;
 import com.fitback.domain.auth.service.AuthService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -52,7 +53,10 @@ public class AuthController {
     /* 이메일 인증 완료 */
     @GetMapping("/verify-email")
     @Operation(summary = "이메일 인증", description = "메일 링크 클릭 시 이메일 인증 처리")
-    public ResponseEntity<ApiResponse<Void>> verifyEmail(@RequestParam String token) {
+    public ResponseEntity<ApiResponse<Void>> verifyEmail(
+            @Parameter(description = "Email verification token")
+            @RequestParam String token
+    ) {
         authService.verifyEmail(token);
         return ResponseEntity.ok(ApiResponse.onSuccess("이메일 인증이 완료되었습니다.", null));
     }
@@ -79,8 +83,8 @@ public class AuthController {
     @PostMapping("/logout")
     @Operation(summary = "로그아웃", description = "Refresh Token 삭제 및 Access Token 블랙리스트 등록")
     public ResponseEntity<ApiResponse<Void>> logout(
-            @AuthenticationPrincipal(expression = "user.email") String email,
-            HttpServletRequest request
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.email") String email,
+            @Parameter(hidden = true) HttpServletRequest request
     ) {
         String accessToken = resolveToken(request);
         authService.logout(email, accessToken);

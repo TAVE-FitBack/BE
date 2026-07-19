@@ -5,6 +5,7 @@ import com.fitback.domain.customer.dto.response.MessageTemplateMarkSentResponse;
 import com.fitback.domain.customer.service.CustomerService;
 import com.fitback.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -28,9 +29,9 @@ public class MessageTemplateController {
     @PostMapping("/{messageTemplateId}/mark-sent")
     @Operation(summary = "메시지 전송 완료", description = "사용자가 외부 채널로 메시지 전송을 완료한 뒤 메시지와 후속 연락을 완료 처리합니다.")
     public ResponseEntity<ApiResponse<MessageTemplateMarkSentResponse>> markMessageTemplateSent(
-            @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
-            @AuthenticationPrincipal(expression = "user.id") UUID userId,
-            @PathVariable UUID messageTemplateId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.id") UUID userId,
+            @Parameter(description = "Message template ID") @PathVariable UUID messageTemplateId,
             @RequestBody(required = false) MessageTemplateMarkSentRequest request
     ) {
         MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
