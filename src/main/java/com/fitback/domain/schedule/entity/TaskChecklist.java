@@ -61,8 +61,9 @@ public class TaskChecklist extends BaseTimeEntity {
     @Column(name = "done_at")
     private OffsetDateTime doneAt;
 
-    public void syncFromSchedule(String title, LocalDate dueDate) {
+    public void syncFromSchedule(String title, TaskType taskType, LocalDate dueDate) {
         this.title = title;
+        this.taskType = taskType;
         this.dueDate = dueDate;
     }
 

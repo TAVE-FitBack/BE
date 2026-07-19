@@ -95,14 +95,13 @@ public class TaskChecklistService {
             return;
         }
 
-        if (schedule.getScheduleType() != ScheduleType.CONSULTATION) {
-            taskChecklistRepository.deleteBySchedule_Id(schedule.getId());
-            return;
-        }
-
         taskChecklistRepository.findBySchedule_Id(schedule.getId())
                 .ifPresentOrElse(
-                        taskChecklist -> taskChecklist.syncFromSchedule(generateTitle(schedule), toDueDate(schedule)),
+                        taskChecklist -> taskChecklist.syncFromSchedule(
+                                generateTitle(schedule),
+                                toTaskType(schedule.getScheduleType()),
+                                toDueDate(schedule)
+                        ),
                         () -> createForSchedule(schedule)
                 );
     }

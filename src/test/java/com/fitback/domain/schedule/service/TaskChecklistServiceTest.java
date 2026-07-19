@@ -148,6 +148,7 @@ class TaskChecklistServiceTest {
                 UUID.randomUUID(),
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 false,
                 null
@@ -158,13 +159,14 @@ class TaskChecklistServiceTest {
         taskChecklistService.syncForUpdatedSchedule(schedule);
 
         assertThat(taskChecklist.getTitle()).isEqualTo("김민지 상담 14:00");
+        assertThat(taskChecklist.getTaskType()).isEqualTo(TaskType.CONSULTATION);
         assertThat(taskChecklist.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 16));
         verify(taskChecklistRepository, never()).save(org.mockito.ArgumentMatchers.any(TaskChecklist.class));
     }
 
     @Test
-    @DisplayName("상담 일정이 방문 일정으로 변경되면 연결 체크리스트를 삭제한다")
-    void deleteChecklistWhenConsultationChangedToVisit() {
+    @DisplayName("상담 일정이 방문 일정으로 변경되면 연결 체크리스트를 방문 유형으로 동기화한다")
+    void syncChecklistWhenConsultationChangedToVisit() {
         UUID scheduleId = UUID.randomUUID();
         Schedule schedule = schedule(
                 scheduleId,
@@ -174,10 +176,25 @@ class TaskChecklistServiceTest {
                 null,
                 OffsetDateTime.parse("2026-10-16T14:00:00+09:00")
         );
+        TaskChecklist taskChecklist = taskChecklist(
+                UUID.randomUUID(),
+                schedule,
+                "김민지 상담 10:30",
+                TaskType.CONSULTATION,
+                LocalDate.of(2026, 10, 15),
+                false,
+                null
+        );
+
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.of(taskChecklist));
 
         taskChecklistService.syncForUpdatedSchedule(schedule);
 
-        verify(taskChecklistRepository).deleteBySchedule_Id(scheduleId);
+        assertThat(taskChecklist.getTitle()).isEqualTo("방문 14:00");
+        assertThat(taskChecklist.getTaskType()).isEqualTo(TaskType.VISIT);
+        assertThat(taskChecklist.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 16));
+        verify(taskChecklistRepository, never()).deleteBySchedule_Id(scheduleId);
+        verify(taskChecklistRepository, never()).save(org.mockito.ArgumentMatchers.any(TaskChecklist.class));
     }
 
     @Test
@@ -200,6 +217,7 @@ class TaskChecklistServiceTest {
         ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
         verify(taskChecklistRepository).save(captor.capture());
         assertThat(captor.getValue().getTitle()).isEqualTo("강호윤 상담 09:00");
+        assertThat(captor.getValue().getTaskType()).isEqualTo(TaskType.CONSULTATION);
         assertThat(captor.getValue().getDueDate()).isEqualTo(LocalDate.of(2026, 10, 17));
     }
 
@@ -221,6 +239,7 @@ class TaskChecklistServiceTest {
                 UUID.randomUUID(),
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 date,
                 false,
                 null
@@ -264,6 +283,7 @@ class TaskChecklistServiceTest {
                 taskId,
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 false,
                 null
@@ -297,6 +317,7 @@ class TaskChecklistServiceTest {
                 taskId,
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 true,
                 doneAt
@@ -330,6 +351,7 @@ class TaskChecklistServiceTest {
                 taskId,
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 false,
                 null
@@ -347,6 +369,7 @@ class TaskChecklistServiceTest {
             UUID taskId,
             Schedule schedule,
             String title,
+            TaskType taskType,
             LocalDate dueDate,
             boolean done,
             OffsetDateTime doneAt
@@ -355,7 +378,7 @@ class TaskChecklistServiceTest {
                 .id(taskId)
                 .schedule(schedule)
                 .title(title)
-                .taskType(TaskType.CONSULTATION)
+                .taskType(taskType)
                 .dueDate(dueDate)
                 .done(done)
                 .doneAt(doneAt)
