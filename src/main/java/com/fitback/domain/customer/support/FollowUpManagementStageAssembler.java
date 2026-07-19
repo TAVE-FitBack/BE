@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 public class FollowUpManagementStageAssembler {
 
     private static final String STATUS_PENDING = "PENDING";
+    private static final String STATUS_SENT = "SENT";
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String STATUS_CLOSED = "CLOSED";
 
@@ -16,7 +17,7 @@ public class FollowUpManagementStageAssembler {
             FollowUpStageRow activeFollowUp,
             FollowUpStageRow latestFollowUp
     ) {
-        if (activeFollowUp != null && STATUS_PENDING.equals(activeFollowUp.status())) {
+        if (activeFollowUp != null && isActiveStatus(activeFollowUp.status())) {
             return FollowUpManagementStageResponse.builder()
                     .type(FollowUpManagementStageType.ROUND)
                     .contactRound(activeFollowUp.contactRound())
@@ -51,5 +52,8 @@ public class FollowUpManagementStageAssembler {
 
     private String activeRoundLabel(int contactRound) {
         return contactRound + "차 연락 대상";
+    }
+    private boolean isActiveStatus(String status) {
+        return STATUS_PENDING.equals(status) || STATUS_SENT.equals(status);
     }
 }

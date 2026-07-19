@@ -280,7 +280,7 @@ class CustomerManagementServiceTest {
                 .thenReturn(List.of());
 
         FollowUpStageRow roundOne = followUp(roundOneCustomerId, "PENDING", 1);
-        FollowUpStageRow roundTwo = followUp(roundTwoCustomerId, "PENDING", 2);
+        FollowUpStageRow roundTwo = followUp(roundTwoCustomerId, "SENT", 2);
         FollowUpStageRow roundThree = followUp(roundThreeCustomerId, "PENDING", 3);
         FollowUpStageRow completed = followUp(completedCustomerId, "COMPLETED", 3);
         FollowUpStageRow closed = followUp(closedCustomerId, "CLOSED", 2);

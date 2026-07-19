@@ -77,6 +77,10 @@ public class FollowUp extends BaseTimeEntity {
         this.status = FollowUpStatus.CLOSED;
     }
 
+    public void markSent() {
+        this.status = FollowUpStatus.SENT;
+    }
+
     public void markCompleted() {
         this.status = FollowUpStatus.COMPLETED;
     }

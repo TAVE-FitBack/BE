@@ -143,8 +143,7 @@ public class CustomerService {
         List<NonConversionReason> nonConversionReasons = nonConversionReasonRepository
                 .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
 
-        FollowUp activeFollowUp = followUpRepository
-                .findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING)
+        FollowUp activeFollowUp = followUpRepository.findActiveByCustomerId(customerId)
                 .orElse(null);
 
         FollowUpAiInsight followUpAiInsight = activeFollowUp == null
@@ -344,7 +343,7 @@ public class CustomerService {
         if (customer.getStatus() == CustomerStatus.REGISTERED || customer.getStatus() == CustomerStatus.LOST) {
             followUp.markClosed();
         } else {
-            followUp.markCompleted();
+            markFollowUpSentOrCompleted(followUp);
         }
         saveMessageSentTimeline(customer, actorUser, messageTemplate, beforeDeliveryStatus);
 
@@ -356,6 +355,14 @@ public class CustomerService {
                 .followUpStatus(followUp.getStatus())
                 .contactRound(followUp.getContactRound())
                 .build();
+    }
+
+    private void markFollowUpSentOrCompleted(FollowUp followUp) {
+        if (followUp.getContactRound() >= 3) {
+            followUp.markCompleted();
+            return;
+        }
+        followUp.markSent();
     }
 
     public Map<String, Object> checkReconsultationPreview(
@@ -654,23 +661,19 @@ public class CustomerService {
         List<NonConversionReason> reasons = nonConversionReasonRepository
                 .findAllByCustomerIdOrderByUpdatedAtDesc(customerId);
 
-        FollowUp latestFollowUp = followUpRepository
-                .findFirstByCustomerIdOrderByCreatedAtDescIdDesc(customerId)
+        FollowUp activeFollowUp = followUpRepository.findActiveByCustomerId(customerId)
                 .orElse(null);
-        int nextContactRound = resolveNextContactRound(latestFollowUp);
+        int nextContactRound = resolveNextContactRound(activeFollowUp);
 
         AiNextActionRegenerateResponse aiResponse = aiConsultationClient.regenerateNextAction(
                 buildNextActionAiRequest(customer, latestConsultation, customerAiInsight, reasons)
         );
 
-        FollowUp oldFollowUp = followUpRepository
-                .findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING)
-                .orElse(null);
-        Map<String, Object> oldFollowUpBeforeValue = oldFollowUp != null
-                ? buildFollowUpTimelineValue(oldFollowUp, null)
+        Map<String, Object> oldFollowUpBeforeValue = activeFollowUp != null
+                ? buildFollowUpTimelineValue(activeFollowUp, null)
                 : null;
-        if (oldFollowUp != null) {
-            oldFollowUp.markSuperseded();
+        if (activeFollowUp != null) {
+            activeFollowUp.markSuperseded();
         }
 
         FollowUp newFollowUp = FollowUp.builder()
@@ -690,8 +693,8 @@ public class CustomerService {
 
         return NextActionRegenerateResponse.builder()
                 .customerId(customer.getId())
-                .oldFollowUpId(oldFollowUp != null ? oldFollowUp.getId() : null)
-                .oldFollowUpStatus(oldFollowUp != null ? oldFollowUp.getStatus() : null)
+                .oldFollowUpId(activeFollowUp != null ? activeFollowUp.getId() : null)
+                .oldFollowUpStatus(activeFollowUp != null ? activeFollowUp.getStatus() : null)
                 .newFollowUpId(savedFollowUp.getId())
                 .newFollowUpStatus(savedFollowUp.getStatus())
                 .contactRound(savedFollowUp.getContactRound())
@@ -1116,12 +1119,12 @@ public class CustomerService {
         };
     }
 
-    private int resolveNextContactRound(FollowUp latestFollowUp) {
-        if (latestFollowUp == null) {
+    private int resolveNextContactRound(FollowUp activeFollowUp) {
+        if (activeFollowUp == null) {
             return 1;
         }
-        int currentRound = latestFollowUp.getContactRound();
-        if (latestFollowUp.getStatus() == FollowUpStatus.COMPLETED) {
+        int currentRound = activeFollowUp.getContactRound();
+        if (activeFollowUp.getStatus() == FollowUpStatus.SENT) {
             if (currentRound >= 3) {
                 throw new BusinessException(CustomerErrorCode.FOLLOW_UP_ROUND_LIMIT_EXCEEDED);
             }
