@@ -66,6 +66,7 @@ public class ConsultationService {
     private final ApplicationEventPublisher eventPublisher;
     private final FollowUpConversionService followUpConversionService;
     private final ConsultationMaterialFileService consultationMaterialFileService;
+    private final ConsultationSignalService consultationSignalService;
 
     public ConsultationNewResponse getNewConsultationData(UUID storeId) {
         if (storeId == null) {
@@ -166,6 +167,7 @@ public class ConsultationService {
                 request.getConsultation().getConsultedAt()
         );
         Consultation consultation = saveConsultation(customer, counselor, service, request);
+        consultationSignalService.saveSnapshot(consultation, request.getAiCheckPreview());
         if (request.getConsultation().getRegistrationStatus() == ConsultationRegistrationStatus.REGISTERED) {
             followUpConversionService.recordConversionIfAbsent(
                     customer,

@@ -3,6 +3,8 @@ package com.fitback.domain.consultation.service;
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewItemRequest;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.ConsultationCreateRequest;
 import com.fitback.domain.consultation.dto.response.ConsultationCreateResponse;
@@ -11,6 +13,7 @@ import com.fitback.domain.consultation.dto.response.ConsultationCustomerSearchRe
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
+import com.fitback.domain.consultation.enums.AiCheckSignalKey;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.consultation.enums.ConsultationMaterialType;
@@ -115,6 +118,9 @@ class ConsultationServiceTest {
     @Mock
     private ConsultationMaterialFileService consultationMaterialFileService;
 
+    @Mock
+    private ConsultationSignalService consultationSignalService;
+
     private ConsultationService consultationService;
 
     @BeforeEach
@@ -131,7 +137,8 @@ class ConsultationServiceTest {
                 aiConsultationClient,
                 eventPublisher,
                 followUpConversionService,
-                consultationMaterialFileService
+                consultationMaterialFileService,
+                consultationSignalService
         );
     }
 
@@ -522,9 +529,104 @@ class ConsultationServiceTest {
                 consultedAt,
                 ConversionSource.DIRECT_REGISTRATION
         );
+        verify(consultationSignalService).saveSnapshot(savedConsultation, null);
         verify(aiConsultationClient, never()).analyzeConsultation(any());
         verifyNoInteractions(interestServiceRepository);
         verifyNoMoreInteractions(customerRepository);
+    }
+
+    @Test
+    @DisplayName("상담 등록 요청에 aiCheckPreview가 있으면 consultation 저장 후 consultation_signal 저장 서비스를 호출한다")
+    void createConsultationSavesAiCheckPreviewSnapshot() {
+        UUID storeId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID inflowPathId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID consultationId = UUID.randomUUID();
+        OffsetDateTime consultedAt = OffsetDateTime.parse("2026-06-30T14:00:00+09:00");
+
+        Store store = Store.builder()
+                .id(storeId)
+                .name("핏백짐")
+                .storeType(StoreType.GYM)
+                .build();
+        Service service = Service.builder()
+                .id(serviceId)
+                .store(store)
+                .name("PT")
+                .active(true)
+                .build();
+        User counselor = User.builder()
+                .id(userId)
+                .store(store)
+                .email("coach@fitback.test")
+                .nickname("김코치")
+                .role(UserRole.STAFF)
+                .password("password")
+                .agreeMarketing(false)
+                .agreeTerms(true)
+                .emailVerified(true)
+                .build();
+        InflowPathOption inflowPathOption = InflowPathOption.builder()
+                .id(inflowPathId)
+                .store(store)
+                .name("네이버 검색")
+                .displayOrder(1)
+                .active(true)
+                .build();
+        Customer savedCustomer = Customer.builder()
+                .id(customerId)
+                .store(store)
+                .name("김고객")
+                .gender(Gender.FEMALE)
+                .birthDate(LocalDate.of(1995, 1, 1))
+                .phoneNum("010-1234-5678")
+                .preferredContactChannel(PreferredContactChannel.KAKAO)
+                .inflowPathOption(inflowPathOption)
+                .status(CustomerStatus.PENDING)
+                .firstConsultAt(consultedAt.toLocalDate())
+                .latestConsultAt(consultedAt.toLocalDate())
+                .build();
+        Consultation savedConsultation = Consultation.builder()
+                .id(consultationId)
+                .customer(savedCustomer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(consultedAt)
+                .sessionNo(1)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("상담 원문")
+                .build();
+        AiCheckPreviewSnapshotRequest aiCheckPreview = aiCheckPreviewSnapshot();
+        ConsultationCreateRequest request = createRequest(
+                serviceId,
+                userId,
+                inflowPathId,
+                ConsultationRegistrationStatus.PENDING,
+                consultedAt
+        );
+        ReflectionTestUtils.setField(request, "aiCheckPreview", aiCheckPreview);
+
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId))
+                .thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(userId, storeId))
+                .thenReturn(Optional.of(counselor));
+        when(inflowPathOptionRepository.findByIdAndStoreIdAndActiveTrue(inflowPathId, storeId))
+                .thenReturn(Optional.of(inflowPathOption));
+        when(customerRepository.findByPhoneNumAndStoreId("010-1234-5678", storeId))
+                .thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class)))
+                .thenReturn(savedCustomer);
+        when(consultationRepository.save(any(Consultation.class)))
+                .thenReturn(savedConsultation);
+
+        consultationService.createConsultation(storeId, request);
+
+        InOrder inOrder = inOrder(consultationRepository, consultationSignalService);
+        inOrder.verify(consultationRepository).save(any(Consultation.class));
+        inOrder.verify(consultationSignalService).saveSnapshot(savedConsultation, aiCheckPreview);
     }
 
     @ParameterizedTest
@@ -1160,6 +1262,41 @@ class ConsultationServiceTest {
         ReflectionTestUtils.setField(request, "customer", customer);
         ReflectionTestUtils.setField(request, "consultation", consultation);
 
+        return request;
+    }
+
+    private AiCheckPreviewSnapshotRequest aiCheckPreviewSnapshot() {
+        AiCheckPreviewItemRequest exerciseGoal = aiCheckPreviewItem(
+                AiCheckSignalKey.EXERCISE_GOAL,
+                "운동 목적",
+                true,
+                "체중 감량"
+        );
+        AiCheckPreviewItemRequest injuryHistory = aiCheckPreviewItem(
+                AiCheckSignalKey.INJURY_HISTORY,
+                "부상 경험",
+                false,
+                "아직 확인되지 않음"
+        );
+
+        AiCheckPreviewSnapshotRequest request = new AiCheckPreviewSnapshotRequest();
+        ReflectionTestUtils.setField(request, "confirmedCount", 1);
+        ReflectionTestUtils.setField(request, "totalCount", 2);
+        ReflectionTestUtils.setField(request, "items", List.of(exerciseGoal, injuryHistory));
+        return request;
+    }
+
+    private AiCheckPreviewItemRequest aiCheckPreviewItem(
+            AiCheckSignalKey key,
+            String label,
+            boolean confirmed,
+            String value
+    ) {
+        AiCheckPreviewItemRequest request = new AiCheckPreviewItemRequest();
+        ReflectionTestUtils.setField(request, "key", key);
+        ReflectionTestUtils.setField(request, "label", label);
+        ReflectionTestUtils.setField(request, "confirmed", confirmed);
+        ReflectionTestUtils.setField(request, "value", value);
         return request;
     }
 }

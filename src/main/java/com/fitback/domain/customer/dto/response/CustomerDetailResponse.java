@@ -1,6 +1,7 @@
 package com.fitback.domain.customer.dto.response;
 
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.AiCheckSignalKey;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
 import com.fitback.domain.consultation.enums.ConsultationStage;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
@@ -27,6 +28,7 @@ public class CustomerDetailResponse {
     private CustomerInfo customer;
     private LatestConsultation latestConsultation;
     private AiAnalysisStatus aiAnalysisStatus;
+    private ConsultationSignalSnapshot consultationSignalSnapshot;
     private AiInsight aiInsight;
     private List<NonConversionReasonInfo> nonConversionReasons;
     private ActiveFollowUp activeFollowUp;
@@ -68,6 +70,24 @@ public class CustomerDetailResponse {
         private ConsultationSourceType sourceType;
         private String rawText;
         private String summary;
+    }
+
+    @Getter
+    @Builder
+    @AllArgsConstructor
+    public static class ConsultationSignalSnapshot {
+        private UUID consultationId;
+        private List<ConsultationSignalItem> items;
+    }
+
+    @Getter
+    @Builder
+    @AllArgsConstructor
+    public static class ConsultationSignalItem {
+        private AiCheckSignalKey key;
+        private String label;
+        private Boolean confirmed;
+        private String value;
     }
 
     @Getter

@@ -1,6 +1,7 @@
 package com.fitback.domain.customer.dto.request;
 
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -23,6 +24,9 @@ public class ReconsultationCreateRequest {
 
     private UUID registeredServiceId;
 
+    @Valid
+    private AiCheckPreviewSnapshotRequest aiCheckPreview;
+
     @Getter
     @NoArgsConstructor
     public static class ConsultationInfo {
@@ -38,13 +42,5 @@ public class ReconsultationCreateRequest {
 
         @NotBlank(message = "상담 내용은 필수입니다.")
         private String rawText;
-
-        private String visitPurpose;
-
-        private String experienceNote;
-
-        private String positiveSignal;
-
-        private String extraNote;
     }
 }

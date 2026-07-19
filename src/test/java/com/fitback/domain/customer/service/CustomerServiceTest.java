@@ -2,11 +2,15 @@ package com.fitback.domain.customer.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.ConsultationMaterialFileData;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewItemRequest;
+import com.fitback.domain.consultation.dto.request.AiCheckPreviewSnapshotRequest;
 import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
 import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
+import com.fitback.domain.consultation.entity.ConsultationSignal;
 import com.fitback.domain.consultation.enums.AiAnalysisStatus;
+import com.fitback.domain.consultation.enums.AiCheckSignalKey;
 import com.fitback.domain.consultation.enums.ConsultationMaterialType;
 import com.fitback.domain.consultation.enums.ConsultationRegistrationStatus;
 import com.fitback.domain.consultation.enums.ConsultationSourceType;
@@ -15,6 +19,7 @@ import com.fitback.domain.consultation.event.ConsultationCreatedEvent;
 import com.fitback.domain.consultation.repository.ConsultationMaterialRepository;
 import com.fitback.domain.consultation.repository.ConsultationRepository;
 import com.fitback.domain.consultation.service.ConsultationMaterialFileService;
+import com.fitback.domain.consultation.service.ConsultationSignalService;
 import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
@@ -155,6 +160,9 @@ class CustomerServiceTest {
     @Mock
     private ConsultationMaterialFileService consultationMaterialFileService;
 
+    @Mock
+    private ConsultationSignalService consultationSignalService;
+
     private CustomerService customerService;
 
     @BeforeEach
@@ -176,7 +184,8 @@ class CustomerServiceTest {
                 userRepository,
                 eventPublisher,
                 followUpConversionService,
-                consultationMaterialFileService
+                consultationMaterialFileService,
+                consultationSignalService
         );
     }
 
@@ -240,10 +249,26 @@ class CustomerServiceTest {
                 OffsetDateTime.parse("2026-07-01T13:02:00+09:00")
         );
         CustomerActivityTimeline timeline = timeline(UUID.randomUUID(), store, customer, counselor, latestConsultation.getId());
+        ConsultationSignal exerciseGoal = consultationSignal(
+                latestConsultation,
+                AiCheckSignalKey.EXERCISE_GOAL,
+                "운동 목적",
+                true,
+                "체중 감량"
+        );
+        ConsultationSignal injuryHistory = consultationSignal(
+                latestConsultation,
+                AiCheckSignalKey.INJURY_HISTORY,
+                "부상 경험",
+                false,
+                "아직 확인되지 않음"
+        );
 
         when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
                 .thenReturn(Optional.of(latestConsultation));
+        when(consultationSignalService.findCustomerDetailCardSignals(latestConsultation.getId()))
+                .thenReturn(List.of(exerciseGoal, injuryHistory));
         when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.of(aiInsight));
         when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
                 .thenReturn(List.of(reason));
@@ -266,6 +291,13 @@ class CustomerServiceTest {
         assertThat(response.getLatestConsultation().getConsultedServiceName()).isEqualTo("PT");
         assertThat(response.getLatestConsultation().getCounselorName()).isEqualTo("문형주");
         assertThat(response.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.COMPLETED);
+        assertThat(response.getConsultationSignalSnapshot().getConsultationId()).isEqualTo(latestConsultation.getId());
+        assertThat(response.getConsultationSignalSnapshot().getItems())
+                .extracting(CustomerDetailResponse.ConsultationSignalItem::getKey)
+                .containsExactly(AiCheckSignalKey.EXERCISE_GOAL, AiCheckSignalKey.INJURY_HISTORY);
+        assertThat(response.getConsultationSignalSnapshot().getItems().get(0).getLabel()).isEqualTo("운동 목적");
+        assertThat(response.getConsultationSignalSnapshot().getItems().get(0).getValue()).isEqualTo("체중 감량");
+        assertThat(response.getConsultationSignalSnapshot().getItems().get(1).getConfirmed()).isFalse();
         assertThat(response.getAiInsight().getLeadTemperature()).isEqualTo("WARM");
         assertThat(response.getNonConversionReasons()).hasSize(1);
         assertThat(response.getNonConversionReasons().get(0).getReasonType()).isEqualTo("PRICE_BURDEN");
@@ -278,8 +310,48 @@ class CustomerServiceTest {
         assertThat(response.getTimeline().get(0).getActivityType()).isEqualTo(CustomerActivityType.CONSULTATION_CREATED);
 
         verify(consultationRepository).findFirstByCustomerIdOrderBySessionNoDesc(customerId);
+        verify(consultationSignalService).findCustomerDetailCardSignals(latestConsultation.getId());
         verify(messageTemplateRepository).findFirstByCustomerIdAndFollowUpIdOrderByGeneratedAtDesc(customerId, followUp.getId());
         verify(customerActivityTimelineRepository).findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId);
+    }
+
+    @Test
+    @DisplayName("상담내용 상세 조회 시 최신 상담의 signal이 없으면 consultationSignalSnapshot items는 빈 배열로 반환한다")
+    void getCustomerDetailReturnsEmptyConsultationSignalSnapshotWhenSignalDoesNotExist() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service consultedService = service(UUID.randomUUID(), store, "PT");
+        InflowPathOption inflowPathOption = inflowPathOption(UUID.randomUUID(), store);
+        User counselor = user(UUID.randomUUID(), store, "문형주");
+        Customer customer = customer(customerId, store, null, inflowPathOption);
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                consultedService,
+                1,
+                AiAnalysisStatus.PROCESSING
+        );
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(consultationSignalService.findCustomerDetailCardSignals(latestConsultation.getId()))
+                .thenReturn(List.of());
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.empty());
+        when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
+                .thenReturn(List.of());
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(storeId, customerId);
+
+        assertThat(response.getConsultationSignalSnapshot()).isNotNull();
+        assertThat(response.getConsultationSignalSnapshot().getConsultationId()).isEqualTo(latestConsultation.getId());
+        assertThat(response.getConsultationSignalSnapshot().getItems()).isEmpty();
     }
 
     @Test
@@ -1465,10 +1537,6 @@ class CustomerServiceTest {
                     .stage(unsaved.getStage())
                     .sourceType(unsaved.getSourceType())
                     .rawText(unsaved.getRawText())
-                    .visitPurpose(unsaved.getVisitPurpose())
-                    .experienceNote(unsaved.getExperienceNote())
-                    .positiveSignal(unsaved.getPositiveSignal())
-                    .extraNote(unsaved.getExtraNote())
                     .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
                     .build();
         });
@@ -1492,10 +1560,6 @@ class CustomerServiceTest {
                         && consultation.getStage() == ConsultationStage.CONSULTATION
                         && consultation.getSourceType() == ConsultationSourceType.DIRECT
                         && "재상담 원문".equals(consultation.getRawText())
-                        && "체중 감량".equals(consultation.getVisitPurpose())
-                        && "PT 경험 없음".equals(consultation.getExperienceNote())
-                        && "단기권 관심".equals(consultation.getPositiveSignal())
-                        && "가격 안내 필요".equals(consultation.getExtraNote())
                         && consultation.getAiAnalysisStatus() == AiAnalysisStatus.PROCESSING
         ));
         verify(customerActivityTimelineRepository).save(argThat(timeline ->
@@ -1506,7 +1570,65 @@ class CustomerServiceTest {
                         && newConsultationId.equals(timeline.getRelatedId())
         ));
         verify(eventPublisher).publishEvent(new ConsultationCreatedEvent(newConsultationId));
+        verify(consultationSignalService).saveSnapshot(any(Consultation.class), org.mockito.ArgumentMatchers.isNull());
         verifyNoInteractions(followUpConversionService);
+    }
+
+    @Test
+    @DisplayName("재상담 등록 요청에 aiCheckPreview가 있으면 consultation 저장 후 consultation_signal 저장 서비스를 호출한다")
+    void createReconsultationSavesAiCheckPreviewSnapshot() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID serviceId = UUID.randomUUID();
+        UUID counselorId = UUID.randomUUID();
+        UUID latestConsultationId = UUID.randomUUID();
+        UUID newConsultationId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(serviceId, store, "PT");
+        InflowPathOption inflowPathOption = inflowPathOption(UUID.randomUUID(), store);
+        Customer customer = customer(customerId, store, null, inflowPathOption);
+        User counselor = user(counselorId, store, "문형주");
+        Consultation latestConsultation = consultation(
+                latestConsultationId,
+                customer,
+                counselor,
+                service,
+                2,
+                AiAnalysisStatus.COMPLETED
+        );
+        Consultation savedConsultation = Consultation.builder()
+                .id(newConsultationId)
+                .customer(customer)
+                .user(counselor)
+                .consultedService(service)
+                .consultedAt(OffsetDateTime.parse("2026-07-08T15:00:00+09:00"))
+                .sessionNo(3)
+                .stage(ConsultationStage.CONSULTATION)
+                .sourceType(ConsultationSourceType.DIRECT)
+                .rawText("재상담 원문")
+                .aiAnalysisStatus(AiAnalysisStatus.PROCESSING)
+                .build();
+        AiCheckPreviewSnapshotRequest aiCheckPreview = aiCheckPreviewSnapshot();
+        ReconsultationCreateRequest request = reconsultationCreateRequest(
+                serviceId,
+                counselorId,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00"),
+                "재상담 원문"
+        );
+        ReflectionTestUtils.setField(request, "aiCheckPreview", aiCheckPreview);
+
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(serviceRepository.findByIdAndStoreIdAndActiveTrue(serviceId, storeId)).thenReturn(Optional.of(service));
+        when(userRepository.findByIdAndStore_Id(counselorId, storeId)).thenReturn(Optional.of(counselor));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(latestConsultation));
+        when(consultationRepository.save(any(Consultation.class))).thenReturn(savedConsultation);
+
+        customerService.createReconsultation(storeId, customerId, request);
+
+        InOrder inOrder = inOrder(consultationRepository, consultationSignalService);
+        inOrder.verify(consultationRepository).save(any(Consultation.class));
+        inOrder.verify(consultationSignalService).saveSnapshot(savedConsultation, aiCheckPreview);
     }
 
     @Test
@@ -1571,10 +1693,6 @@ class CustomerServiceTest {
                     .stage(unsaved.getStage())
                     .sourceType(unsaved.getSourceType())
                     .rawText(unsaved.getRawText())
-                    .visitPurpose(unsaved.getVisitPurpose())
-                    .experienceNote(unsaved.getExperienceNote())
-                    .positiveSignal(unsaved.getPositiveSignal())
-                    .extraNote(unsaved.getExtraNote())
                     .aiAnalysisStatus(unsaved.getAiAnalysisStatus())
                     .build();
         });
@@ -2322,14 +2440,62 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(consultation, "consultedAt", consultedAt);
         ReflectionTestUtils.setField(consultation, "userId", counselorId);
         ReflectionTestUtils.setField(consultation, "rawText", rawText);
-        ReflectionTestUtils.setField(consultation, "visitPurpose", "체중 감량");
-        ReflectionTestUtils.setField(consultation, "experienceNote", "PT 경험 없음");
-        ReflectionTestUtils.setField(consultation, "positiveSignal", "단기권 관심");
-        ReflectionTestUtils.setField(consultation, "extraNote", "가격 안내 필요");
         ReflectionTestUtils.setField(request, "consultation", consultation);
         ReflectionTestUtils.setField(request, "registrationStatus", registrationStatus);
         ReflectionTestUtils.setField(request, "registeredServiceId", registeredServiceId);
         return request;
+    }
+
+    private AiCheckPreviewSnapshotRequest aiCheckPreviewSnapshot() {
+        AiCheckPreviewItemRequest exerciseGoal = aiCheckPreviewItem(
+                AiCheckSignalKey.EXERCISE_GOAL,
+                "운동 목적",
+                true,
+                "체중 감량"
+        );
+        AiCheckPreviewItemRequest injuryHistory = aiCheckPreviewItem(
+                AiCheckSignalKey.INJURY_HISTORY,
+                "부상 경험",
+                false,
+                "아직 확인되지 않음"
+        );
+
+        AiCheckPreviewSnapshotRequest request = new AiCheckPreviewSnapshotRequest();
+        ReflectionTestUtils.setField(request, "confirmedCount", 1);
+        ReflectionTestUtils.setField(request, "totalCount", 2);
+        ReflectionTestUtils.setField(request, "items", List.of(exerciseGoal, injuryHistory));
+        return request;
+    }
+
+    private AiCheckPreviewItemRequest aiCheckPreviewItem(
+            AiCheckSignalKey key,
+            String label,
+            boolean confirmed,
+            String value
+    ) {
+        AiCheckPreviewItemRequest request = new AiCheckPreviewItemRequest();
+        ReflectionTestUtils.setField(request, "key", key);
+        ReflectionTestUtils.setField(request, "label", label);
+        ReflectionTestUtils.setField(request, "confirmed", confirmed);
+        ReflectionTestUtils.setField(request, "value", value);
+        return request;
+    }
+
+    private ConsultationSignal consultationSignal(
+            Consultation consultation,
+            AiCheckSignalKey key,
+            String label,
+            boolean confirmed,
+            String value
+    ) {
+        return ConsultationSignal.builder()
+                .consultation(consultation)
+                .signalKey(key)
+                .label(label)
+                .confirmed(confirmed)
+                .value(value)
+                .displayOrder(key.getDisplayOrder())
+                .build();
     }
 
     private CustomerAiAnalysisUpdateRequest aiAnalysisUpdateRequest() {
