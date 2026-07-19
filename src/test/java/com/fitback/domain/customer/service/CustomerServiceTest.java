@@ -66,6 +66,7 @@ import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
+import com.fitback.domain.inquiry.repository.InquiryRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.store.entity.Store;
@@ -99,6 +100,7 @@ import java.util.stream.StreamSupport;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -135,6 +137,9 @@ class CustomerServiceTest {
 
     @Mock
     private CustomerActivityTimelineRepository customerActivityTimelineRepository;
+
+    @Mock
+    private InquiryRepository inquiryRepository;
 
     @Mock
     private EventQueryRepository eventQueryRepository;
@@ -177,6 +182,7 @@ class CustomerServiceTest {
                 followUpAiInsightRepository,
                 messageTemplateRepository,
                 customerActivityTimelineRepository,
+                inquiryRepository,
                 eventQueryRepository,
                 serviceRepository,
                 aiConsultationClient,
@@ -279,6 +285,11 @@ class CustomerServiceTest {
                 .thenReturn(Optional.of(messageTemplate));
         when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
                 .thenReturn(List.of(timeline));
+        when(consultationRepository.findAllTimelineDetailsByIdsAndCustomerIdAndStoreId(
+                argThat(ids -> ids.contains(latestConsultation.getId())),
+                eq(customerId),
+                eq(storeId)
+        )).thenReturn(List.of(latestConsultation));
 
         CustomerDetailResponse response = customerService.getCustomerDetail(storeId, customerId);
 
@@ -308,11 +319,209 @@ class CustomerServiceTest {
         assertThat(response.getLatestMessageTemplate().getMessageTemplateId()).isEqualTo(messageTemplate.getId());
         assertThat(response.getTimeline()).hasSize(1);
         assertThat(response.getTimeline().get(0).getActivityType()).isEqualTo(CustomerActivityType.CONSULTATION_CREATED);
+        assertThat(response.getTimeline().get(0).getDetail())
+                .containsEntry("type", "CONSULTATION")
+                .containsEntry("body", latestConsultation.getRawText());
 
         verify(consultationRepository).findFirstByCustomerIdOrderBySessionNoDesc(customerId);
         verify(consultationSignalService).findCustomerDetailCardSignals(latestConsultation.getId());
         verify(messageTemplateRepository).findFirstByCustomerIdAndFollowUpIdOrderByGeneratedAtDesc(customerId, followUp.getId());
         verify(customerActivityTimelineRepository).findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId);
+    }
+
+    @Test
+    @DisplayName("customer detail timeline consultation detail contains raw text")
+    void getCustomerDetailTimelineConsultationDetailContainsRawText() {
+        TimelineDetailContext context = prepareTimelineDetailContext();
+        CustomerActivityTimeline timeline = timeline(
+                UUID.randomUUID(),
+                context.store(),
+                context.customer(),
+                context.counselor(),
+                context.consultation().getId()
+        );
+        stubCustomerDetailBase(context, List.of(timeline));
+        when(consultationRepository.findAllTimelineDetailsByIdsAndCustomerIdAndStoreId(
+                argThat(ids -> ids.contains(context.consultation().getId())),
+                eq(context.customer().getId()),
+                eq(context.store().getId())
+        )).thenReturn(List.of(context.consultation()));
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(
+                context.store().getId(),
+                context.customer().getId()
+        );
+
+        CustomerDetailResponse.TimelineItem item = response.getTimeline().get(0);
+        assertThat(item.getSummary()).isEqualTo(context.consultation().getRawText());
+        assertThat(item.getDetail())
+                .containsEntry("type", "CONSULTATION")
+                .containsEntry("body", context.consultation().getRawText())
+                .containsEntry("summary", context.consultation().getSummary());
+    }
+
+    @Test
+    @DisplayName("customer detail timeline message detail contains content")
+    void getCustomerDetailTimelineMessageTemplateDetailContainsContent() {
+        TimelineDetailContext context = prepareTimelineDetailContext();
+        MessageTemplate messageTemplate = messageTemplate(
+                UUID.randomUUID(),
+                context.customer(),
+                followUp(context),
+                OffsetDateTime.parse("2026-07-01T13:02:00+09:00")
+        );
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .id(UUID.randomUUID())
+                .store(context.store())
+                .customer(context.customer())
+                .actorUser(context.counselor())
+                .activityType(CustomerActivityType.MESSAGE_TEMPLATE_CREATED)
+                .title("Message template created")
+                .description("Message template")
+                .relatedType(ActivityRelatedType.MESSAGE_TEMPLATE)
+                .relatedId(messageTemplate.getId())
+                .afterValue(Map.of("messageTemplateId", messageTemplate.getId()))
+                .occurredAt(OffsetDateTime.parse("2026-07-01T13:02:00+09:00"))
+                .build();
+        stubCustomerDetailBase(context, List.of(timeline));
+        when(messageTemplateRepository.findAllByIdInAndCustomerIdAndCustomer_Store_Id(
+                argThat(ids -> ids.contains(messageTemplate.getId())),
+                eq(context.customer().getId()),
+                eq(context.store().getId())
+        )).thenReturn(List.of(messageTemplate));
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(
+                context.store().getId(),
+                context.customer().getId()
+        );
+
+        CustomerDetailResponse.TimelineItem item = response.getTimeline().get(0);
+        assertThat(item.getSummary()).isEqualTo(messageTemplate.getContent());
+        assertThat(item.getDetail())
+                .containsEntry("type", "MESSAGE_TEMPLATE")
+                .containsEntry("body", messageTemplate.getContent())
+                .containsEntry("editable", true);
+    }
+
+    @Test
+    @DisplayName("customer detail timeline status change contains before and after values")
+    void getCustomerDetailTimelineStatusChangeContainsBeforeAndAfterValue() {
+        TimelineDetailContext context = prepareTimelineDetailContext();
+        Map<String, Object> beforeValue = Map.of("status", CustomerStatus.PENDING);
+        Map<String, Object> afterValue = Map.of("status", CustomerStatus.REGISTERED, "followUpAction", "CLOSED");
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .id(UUID.randomUUID())
+                .store(context.store())
+                .customer(context.customer())
+                .actorUser(context.counselor())
+                .activityType(CustomerActivityType.CUSTOMER_STATUS_CHANGED)
+                .title("Customer status changed")
+                .description("Status changed")
+                .relatedType(ActivityRelatedType.CUSTOMER)
+                .relatedId(context.customer().getId())
+                .beforeValue(beforeValue)
+                .afterValue(afterValue)
+                .occurredAt(OffsetDateTime.parse("2026-07-01T14:00:00+09:00"))
+                .build();
+        stubCustomerDetailBase(context, List.of(timeline));
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(
+                context.store().getId(),
+                context.customer().getId()
+        );
+
+        CustomerDetailResponse.TimelineItem item = response.getTimeline().get(0);
+        assertThat(item.getBeforeValue()).isEqualTo(beforeValue);
+        assertThat(item.getAfterValue()).isEqualTo(afterValue);
+        assertThat(item.getSummary()).isEqualTo("PENDING >> REGISTERED");
+        assertThat(item.getDetail())
+                .containsEntry("type", "STATUS_CHANGE")
+                .containsEntry("beforeStatus", CustomerStatus.PENDING)
+                .containsEntry("afterStatus", CustomerStatus.REGISTERED)
+                .containsEntry("followUpAction", "CLOSED");
+    }
+
+    @Test
+    @DisplayName("customer detail timeline AI analysis falls back to after value")
+    void getCustomerDetailTimelineAiAnalysisFallback() {
+        TimelineDetailContext context = prepareTimelineDetailContext();
+        UUID missingConsultationId = UUID.randomUUID();
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .id(UUID.randomUUID())
+                .store(context.store())
+                .customer(context.customer())
+                .actorUser(context.counselor())
+                .activityType(CustomerActivityType.AI_ANALYSIS_COMPLETED)
+                .title("AI analysis completed")
+                .description("AI analysis")
+                .relatedType(ActivityRelatedType.CONSULTATION)
+                .relatedId(missingConsultationId)
+                .afterValue(Map.of(
+                        "leadTemperature", "WARM",
+                        "priorityScore", 78,
+                        "primaryReasonType", "PRICE_BURDEN"
+                ))
+                .occurredAt(OffsetDateTime.parse("2026-07-01T14:00:00+09:00"))
+                .build();
+        stubCustomerDetailBase(context, List.of(timeline));
+        when(consultationRepository.findAllTimelineDetailsByIdsAndCustomerIdAndStoreId(
+                argThat(ids -> ids.contains(missingConsultationId)),
+                eq(context.customer().getId()),
+                eq(context.store().getId())
+        )).thenReturn(List.of());
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(
+                context.store().getId(),
+                context.customer().getId()
+        );
+
+        CustomerDetailResponse.TimelineItem item = response.getTimeline().get(0);
+        assertThat(item.getSummary()).contains("WARM", "78", "PRICE_BURDEN");
+        assertThat(item.getDetail())
+                .containsEntry("type", "AI_ANALYSIS")
+                .containsEntry("consultationId", missingConsultationId)
+                .containsEntry("leadTemperature", "WARM")
+                .containsEntry("priorityScore", 78)
+                .containsEntry("primaryReasonType", "PRICE_BURDEN");
+    }
+
+    @Test
+    @DisplayName("customer detail timeline returns fallback detail when source is missing")
+    void getCustomerDetailTimelineMissingSourceReturnsFallbackDetail() {
+        TimelineDetailContext context = prepareTimelineDetailContext();
+        UUID missingConsultationId = UUID.randomUUID();
+        CustomerActivityTimeline timeline = CustomerActivityTimeline.builder()
+                .id(UUID.randomUUID())
+                .store(context.store())
+                .customer(context.customer())
+                .actorUser(context.counselor())
+                .activityType(CustomerActivityType.CONSULTATION_CREATED)
+                .title("Consultation created")
+                .description("Consultation source is missing")
+                .relatedType(ActivityRelatedType.CONSULTATION)
+                .relatedId(missingConsultationId)
+                .occurredAt(OffsetDateTime.parse("2026-07-01T14:00:00+09:00"))
+                .build();
+        stubCustomerDetailBase(context, List.of(timeline));
+        when(consultationRepository.findAllTimelineDetailsByIdsAndCustomerIdAndStoreId(
+                argThat(ids -> ids.contains(missingConsultationId)),
+                eq(context.customer().getId()),
+                eq(context.store().getId())
+        )).thenReturn(List.of());
+
+        CustomerDetailResponse response = customerService.getCustomerDetail(
+                context.store().getId(),
+                context.customer().getId()
+        );
+
+        CustomerDetailResponse.TimelineItem item = response.getTimeline().get(0);
+        assertThat(item.getSummary()).isEqualTo("Consultation source is missing");
+        assertThat(item.getDetail())
+                .containsEntry("type", "CONSULTATION")
+                .containsEntry("heading", "Consultation created")
+                .containsEntry("body", "Consultation source is missing")
+                .containsEntry("relatedType", ActivityRelatedType.CONSULTATION)
+                .containsEntry("relatedId", missingConsultationId);
     }
 
     @Test
@@ -2242,6 +2451,64 @@ class CustomerServiceTest {
         assertThat(customer.getStatus()).isEqualTo(CustomerStatus.NO_SHOW);
         assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.PENDING);
         verifyNoInteractions(serviceRepository, customerAiInsightRepository, nonConversionReasonRepository, followUpAiInsightRepository, followUpConversionService);
+    }
+
+    private TimelineDetailContext prepareTimelineDetailContext() {
+        UUID storeId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        InflowPathOption inflowPathOption = inflowPathOption(UUID.randomUUID(), store);
+        User counselor = user(UUID.randomUUID(), store, "counselor");
+        Customer customer = customer(customerId, store, null, inflowPathOption);
+        Consultation consultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                counselor,
+                service,
+                1,
+                AiAnalysisStatus.COMPLETED
+        );
+        return new TimelineDetailContext(store, customer, counselor, consultation);
+    }
+
+    private void stubCustomerDetailBase(
+            TimelineDetailContext context,
+            List<CustomerActivityTimeline> timeline
+    ) {
+        UUID customerId = context.customer().getId();
+        UUID storeId = context.store().getId();
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(context.customer()));
+        when(consultationRepository.findFirstByCustomerIdOrderBySessionNoDesc(customerId))
+                .thenReturn(Optional.of(context.consultation()));
+        when(consultationSignalService.findCustomerDetailCardSignals(context.consultation().getId()))
+                .thenReturn(List.of());
+        when(customerAiInsightRepository.findById(customerId)).thenReturn(Optional.empty());
+        when(nonConversionReasonRepository.findAllByCustomerIdOrderByUpdatedAtDesc(customerId))
+                .thenReturn(List.of());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customerId, FollowUpStatus.PENDING))
+                .thenReturn(Optional.empty());
+        when(customerActivityTimelineRepository.findAllByCustomerIdAndStoreIdOrderByOccurredAtDescCreatedAtDesc(customerId, storeId))
+                .thenReturn(timeline);
+    }
+
+    private FollowUp followUp(TimelineDetailContext context) {
+        return FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(context.customer())
+                .consultation(context.consultation())
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .memo("next action")
+                .build();
+    }
+
+    private record TimelineDetailContext(
+            Store store,
+            Customer customer,
+            User counselor,
+            Consultation consultation
+    ) {
     }
 
     private Store store(UUID storeId) {
