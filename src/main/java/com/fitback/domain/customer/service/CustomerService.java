@@ -62,6 +62,8 @@ import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
+import com.fitback.domain.inquiry.entity.Inquiry;
+import com.fitback.domain.inquiry.repository.InquiryRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
 import com.fitback.domain.user.entity.User;
@@ -75,10 +77,14 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @org.springframework.stereotype.Service
 @RequiredArgsConstructor
@@ -100,6 +106,7 @@ public class CustomerService {
     private final FollowUpAiInsightRepository followUpAiInsightRepository;
     private final MessageTemplateRepository messageTemplateRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
+    private final InquiryRepository inquiryRepository;
     private final EventQueryRepository eventQueryRepository;
     private final ServiceRepository serviceRepository;
     private final AiConsultationClient aiConsultationClient;
@@ -163,7 +170,7 @@ public class CustomerService {
                 .activeFollowUp(toActiveFollowUp(activeFollowUp))
                 .nextBestAction(toNextBestAction(followUpAiInsight))
                 .latestMessageTemplate(toLatestMessageTemplate(latestMessageTemplate))
-                .timeline(toTimelineItems(timeline))
+                .timeline(toTimelineItems(storeId, customerId, timeline))
                 .build();
     }
 
@@ -1271,18 +1278,400 @@ public class CustomerService {
                 .build();
     }
 
-    private List<CustomerDetailResponse.TimelineItem> toTimelineItems(List<CustomerActivityTimeline> timeline) {
+    private List<CustomerDetailResponse.TimelineItem> toTimelineItems(
+            UUID storeId,
+            UUID customerId,
+            List<CustomerActivityTimeline> timeline
+    ) {
+        TimelineRelatedIds relatedIds = collectTimelineRelatedIds(timeline);
+        Map<UUID, Consultation> consultationsById = findTimelineConsultations(
+                relatedIds.consultationIds(),
+                customerId,
+                storeId
+        );
+        Map<UUID, MessageTemplate> messageTemplatesById = findTimelineMessageTemplates(
+                relatedIds.messageTemplateIds(),
+                customerId,
+                storeId
+        );
+        Map<UUID, FollowUp> followUpsById = findTimelineFollowUps(
+                relatedIds.followUpIds(),
+                customerId,
+                storeId
+        );
+        Map<UUID, FollowUpAiInsight> followUpAiInsightsById = findTimelineFollowUpAiInsights(
+                relatedIds.followUpIds()
+        );
+        Map<UUID, Inquiry> inquiriesById = findTimelineInquiries(relatedIds.inquiryIds(), storeId);
+
         return timeline.stream()
-                .map(item -> CustomerDetailResponse.TimelineItem.builder()
+                .map(item -> {
+                    Map<String, Object> detail = buildTimelineDetail(
+                            item,
+                            consultationsById,
+                            messageTemplatesById,
+                            followUpsById,
+                            followUpAiInsightsById,
+                            inquiriesById
+                    );
+                    return CustomerDetailResponse.TimelineItem.builder()
                         .timelineId(item.getId())
                         .activityType(item.getActivityType())
                         .title(item.getTitle())
                         .description(item.getDescription())
+                        .summary(buildTimelineSummary(item, detail))
                         .relatedType(item.getRelatedType())
                         .relatedId(item.getRelatedId())
+                        .beforeValue(item.getBeforeValue())
+                        .afterValue(item.getAfterValue())
                         .occurredAt(item.getOccurredAt())
-                        .build())
+                        .detail(detail)
+                        .build();
+                })
                 .toList();
+    }
+
+    private Map<UUID, Consultation> findTimelineConsultations(
+            Set<UUID> consultationIds,
+            UUID customerId,
+            UUID storeId
+    ) {
+        if (consultationIds.isEmpty()) {
+            return Map.of();
+        }
+        return consultationRepository
+                .findAllTimelineDetailsByIdsAndCustomerIdAndStoreId(consultationIds, customerId, storeId)
+                .stream()
+                .collect(Collectors.toMap(Consultation::getId, Function.identity()));
+    }
+
+    private Map<UUID, MessageTemplate> findTimelineMessageTemplates(
+            Set<UUID> messageTemplateIds,
+            UUID customerId,
+            UUID storeId
+    ) {
+        if (messageTemplateIds.isEmpty()) {
+            return Map.of();
+        }
+        return messageTemplateRepository
+                .findAllByIdInAndCustomerIdAndCustomer_Store_Id(messageTemplateIds, customerId, storeId)
+                .stream()
+                .collect(Collectors.toMap(MessageTemplate::getId, Function.identity()));
+    }
+
+    private Map<UUID, FollowUp> findTimelineFollowUps(
+            Set<UUID> followUpIds,
+            UUID customerId,
+            UUID storeId
+    ) {
+        if (followUpIds.isEmpty()) {
+            return Map.of();
+        }
+        return followUpRepository
+                .findAllTimelineDetailsByIdsAndCustomerIdAndStoreId(followUpIds, customerId, storeId)
+                .stream()
+                .collect(Collectors.toMap(FollowUp::getId, Function.identity()));
+    }
+
+    private Map<UUID, FollowUpAiInsight> findTimelineFollowUpAiInsights(Set<UUID> followUpIds) {
+        if (followUpIds.isEmpty()) {
+            return Map.of();
+        }
+        return followUpAiInsightRepository
+                .findAllByFollowUpIdIn(followUpIds)
+                .stream()
+                .collect(Collectors.toMap(FollowUpAiInsight::getFollowUpId, Function.identity()));
+    }
+
+    private Map<UUID, Inquiry> findTimelineInquiries(Set<UUID> inquiryIds, UUID storeId) {
+        if (inquiryIds.isEmpty()) {
+            return Map.of();
+        }
+        return inquiryRepository
+                .findAllTimelineDetailsByIdsAndStoreId(inquiryIds, storeId)
+                .stream()
+                .collect(Collectors.toMap(Inquiry::getId, Function.identity()));
+    }
+
+    private TimelineRelatedIds collectTimelineRelatedIds(List<CustomerActivityTimeline> timeline) {
+        Set<UUID> consultationIds = new HashSet<>();
+        Set<UUID> messageTemplateIds = new HashSet<>();
+        Set<UUID> followUpIds = new HashSet<>();
+        Set<UUID> inquiryIds = new HashSet<>();
+
+        for (CustomerActivityTimeline item : timeline) {
+            UUID relatedId = item.getRelatedId();
+            if (relatedId != null && item.getRelatedType() != null) {
+                switch (item.getRelatedType()) {
+                    case CONSULTATION -> consultationIds.add(relatedId);
+                    case MESSAGE_TEMPLATE -> messageTemplateIds.add(relatedId);
+                    case FOLLOW_UP -> followUpIds.add(relatedId);
+                    case INQUIRY -> inquiryIds.add(relatedId);
+                    case CUSTOMER -> {
+                    }
+                }
+            }
+
+            addUuidFromMap(consultationIds, item.getAfterValue(), "consultationId");
+            addUuidFromMap(followUpIds, item.getAfterValue(), "followUpId");
+            addUuidFromMap(followUpIds, item.getBeforeValue(), "followUpId");
+            addUuidFromMap(messageTemplateIds, item.getAfterValue(), "messageTemplateId");
+        }
+
+        return new TimelineRelatedIds(
+                consultationIds,
+                messageTemplateIds,
+                followUpIds,
+                inquiryIds
+        );
+    }
+
+    private void addUuidFromMap(Set<UUID> ids, Map<String, Object> values, String key) {
+        UUID id = getUuidValue(values, key);
+        if (id != null) {
+            ids.add(id);
+        }
+    }
+
+    private Map<String, Object> buildTimelineDetail(
+            CustomerActivityTimeline item,
+            Map<UUID, Consultation> consultationsById,
+            Map<UUID, MessageTemplate> messageTemplatesById,
+            Map<UUID, FollowUp> followUpsById,
+            Map<UUID, FollowUpAiInsight> followUpAiInsightsById,
+            Map<UUID, Inquiry> inquiriesById
+    ) {
+        return switch (item.getActivityType()) {
+            case CONSULTATION_CREATED, RECONSULTATION_CREATED -> buildConsultationTimelineDetail(
+                    item,
+                    consultationsById.get(item.getRelatedId())
+            );
+            case MESSAGE_TEMPLATE_CREATED, MESSAGE_SENT -> buildMessageTemplateTimelineDetail(
+                    item,
+                    messageTemplatesById.get(item.getRelatedId())
+            );
+            case AI_ANALYSIS_COMPLETED, AI_ANALYSIS_FAILED -> buildAiAnalysisTimelineDetail(
+                    item,
+                    consultationsById.get(item.getRelatedId())
+            );
+            case NEXT_ACTION_CREATED, NEXT_ACTION_REGENERATED, FOLLOW_UP_CREATED, FOLLOW_UP_COMPLETED -> buildFollowUpTimelineDetail(
+                    item,
+                    followUpsById.get(item.getRelatedId()),
+                    followUpAiInsightsById.get(item.getRelatedId())
+            );
+            case CUSTOMER_STATUS_CHANGED -> buildStatusChangeTimelineDetail(item);
+            case INQUIRY_CONVERTED_TO_CONSULTATION -> buildInquiryConversionTimelineDetail(
+                    item,
+                    inquiriesById.get(item.getRelatedId()),
+                    consultationsById.get(getUuidValue(item.getAfterValue(), "consultationId"))
+            );
+            case AI_ANALYSIS_MANUALLY_UPDATED -> buildAiAnalysisTimelineDetail(item, null);
+            case MESSAGE_TEMPLATE_COPIED -> buildMessageTemplateTimelineDetail(
+                    item,
+                    messageTemplatesById.get(item.getRelatedId())
+            );
+        };
+    }
+
+    private Map<String, Object> buildConsultationTimelineDetail(
+            CustomerActivityTimeline item,
+            Consultation consultation
+    ) {
+        Map<String, Object> detail = baseTimelineDetail("CONSULTATION", item);
+        if (consultation == null) {
+            return detail;
+        }
+
+        detail.put("body", consultation.getRawText());
+        detail.put("summary", consultation.getSummary());
+        detail.put("consultationId", consultation.getId());
+        detail.put("sessionNo", consultation.getSessionNo());
+        detail.put("consultedAt", consultation.getConsultedAt());
+        detail.put("consultedServiceId", consultation.getConsultedService().getId());
+        detail.put("consultedServiceName", consultation.getConsultedService().getName());
+        detail.put("counselorId", consultation.getUser().getId());
+        detail.put("counselorName", consultation.getUser().getNickname());
+        detail.put("sourceType", consultation.getSourceType());
+        detail.put("stage", consultation.getStage());
+        return detail;
+    }
+
+    private Map<String, Object> buildMessageTemplateTimelineDetail(
+            CustomerActivityTimeline item,
+            MessageTemplate messageTemplate
+    ) {
+        Map<String, Object> detail = baseTimelineDetail("MESSAGE_TEMPLATE", item);
+        if (messageTemplate == null) {
+            return detail;
+        }
+
+        detail.put("body", messageTemplate.getContent());
+        detail.put("messageTemplateId", messageTemplate.getId());
+        detail.put("followUpId", messageTemplate.getFollowUp() != null ? messageTemplate.getFollowUp().getId() : null);
+        detail.put("tonePreset", messageTemplate.getTonePreset());
+        detail.put("versionType", messageTemplate.getVersionType());
+        detail.put("deliveryStatus", messageTemplate.getDeliveryStatus());
+        detail.put("generatedAt", messageTemplate.getGeneratedAt());
+        detail.put("sentAt", messageTemplate.getSentAt());
+        boolean editable = item.getActivityType() == CustomerActivityType.MESSAGE_TEMPLATE_CREATED;
+        detail.put("editable", editable);
+        if (editable) {
+            detail.put("editTargetType", "MESSAGE_TEMPLATE");
+            detail.put("editTargetId", messageTemplate.getId());
+        }
+        return detail;
+    }
+
+    private Map<String, Object> buildAiAnalysisTimelineDetail(
+            CustomerActivityTimeline item,
+            Consultation consultation
+    ) {
+        Map<String, Object> detail = baseTimelineDetail("AI_ANALYSIS", item);
+        if (consultation != null) {
+            detail.put("consultationId", consultation.getId());
+            detail.put("summary", consultation.getSummary());
+        } else {
+            detail.put("consultationId", item.getRelatedId());
+        }
+        putFromMap(detail, item.getAfterValue(), "summary");
+        putFromMap(detail, item.getAfterValue(), "leadTemperature");
+        putFromMap(detail, item.getAfterValue(), "temperatureBasis");
+        putFromMap(detail, item.getAfterValue(), "priorityScore");
+        putFromMap(detail, item.getAfterValue(), "primaryReasonType");
+        putFromMap(detail, item.getAfterValue(), "nonConversionReasons");
+        putFromMap(detail, item.getAfterValue(), "nextBestAction");
+        putFromMap(detail, item.getAfterValue(), "followUpId");
+        putFromMap(detail, item.getAfterValue(), "status");
+        putFromMap(detail, item.getAfterValue(), "errorCode");
+        return detail;
+    }
+
+    private Map<String, Object> buildFollowUpTimelineDetail(
+            CustomerActivityTimeline item,
+            FollowUp followUp,
+            FollowUpAiInsight followUpAiInsight
+    ) {
+        Map<String, Object> detail = baseTimelineDetail("FOLLOW_UP", item);
+        if (followUp != null) {
+            detail.put("followUpId", followUp.getId());
+            detail.put("consultationId", followUp.getConsultation().getId());
+            detail.put("recommendContactDate", followUp.getRecommendContactDate());
+            detail.put("status", followUp.getStatus());
+            detail.put("contactRound", followUp.getContactRound());
+            detail.put("memo", followUp.getMemo());
+            detail.put("body", followUp.getMemo());
+        }
+        if (followUpAiInsight != null) {
+            Map<String, Object> actionBasis = followUpAiInsight.getActionBasis();
+            detail.put("nextActionTitle", getStringValue(actionBasis, NEXT_ACTION_TITLE_KEY));
+            detail.put("nextActionDescription", getStringValue(actionBasis, NEXT_ACTION_DESCRIPTION_KEY));
+            detail.put("persuasionPoint", followUpAiInsight.getPersuasionPoint());
+            detail.put("cautionNote", followUpAiInsight.getCautionNote());
+            detail.put("actionBasis", actionBasis);
+        } else {
+            putFromMap(detail, item.getAfterValue(), "nextActionTitle");
+        }
+        return detail;
+    }
+
+    private Map<String, Object> buildStatusChangeTimelineDetail(CustomerActivityTimeline item) {
+        Map<String, Object> detail = baseTimelineDetail("STATUS_CHANGE", item);
+        detail.put("beforeStatus", getValue(item.getBeforeValue(), "status"));
+        detail.put("afterStatus", getValue(item.getAfterValue(), "status"));
+        detail.put("followUpAction", getValue(item.getAfterValue(), "followUpAction"));
+        return detail;
+    }
+
+    private Map<String, Object> buildInquiryConversionTimelineDetail(
+            CustomerActivityTimeline item,
+            Inquiry inquiry,
+            Consultation consultation
+    ) {
+        Map<String, Object> detail = baseTimelineDetail("INQUIRY_CONVERSION", item);
+        detail.put("inquiryId", item.getRelatedId());
+        putFromMap(detail, item.getAfterValue(), "customerId");
+        putFromMap(detail, item.getAfterValue(), "consultationId");
+        putFromMap(detail, item.getAfterValue(), "sessionNo");
+        putFromMap(detail, item.getAfterValue(), "newCustomerCreated");
+        if (inquiry != null) {
+            detail.put("body", inquiry.getRawText());
+            detail.put("inquiryStatus", inquiry.getInquiryStatus());
+            detail.put("serviceName", inquiry.getService().getName());
+            detail.put("counselorName", inquiry.getUser().getNickname());
+        }
+        if (consultation != null) {
+            detail.put("consultationSummary", consultation.getSummary());
+        }
+        return detail;
+    }
+
+    private Map<String, Object> baseTimelineDetail(String type, CustomerActivityTimeline item) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("type", type);
+        detail.put("heading", item.getTitle());
+        detail.put("body", item.getDescription());
+        detail.put("editable", false);
+        return detail;
+    }
+
+    private String buildTimelineSummary(
+            CustomerActivityTimeline item,
+            Map<String, Object> detail
+    ) {
+        Object body = detail.get("body");
+        if (body instanceof String bodyText && !bodyText.isBlank()) {
+            return abbreviate(bodyText);
+        }
+        return abbreviate(item.getDescription());
+    }
+
+    private String abbreviate(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim();
+        int maxLength = 80;
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "...";
+    }
+
+    private void putFromMap(Map<String, Object> target, Map<String, Object> source, String key) {
+        Object value = getValue(source, key);
+        if (value != null) {
+            target.put(key, value);
+        }
+    }
+
+    private Object getValue(Map<String, Object> values, String key) {
+        if (values == null) {
+            return null;
+        }
+        return values.get(key);
+    }
+
+    private UUID getUuidValue(Map<String, Object> values, String key) {
+        Object value = getValue(values, key);
+        if (value instanceof UUID uuid) {
+            return uuid;
+        }
+        if (value instanceof String stringValue && !stringValue.isBlank()) {
+            try {
+                return UUID.fromString(stringValue);
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private record TimelineRelatedIds(
+            Set<UUID> consultationIds,
+            Set<UUID> messageTemplateIds,
+            Set<UUID> followUpIds,
+            Set<UUID> inquiryIds
+    ) {
     }
 
     private String getStringValue(Map<String, Object> values, String key) {
