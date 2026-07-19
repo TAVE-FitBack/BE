@@ -1161,7 +1161,59 @@ class CustomerServiceTest {
     }
 
     @Test
-    @DisplayName("메시지 전송 완료는 메시지를 SENT로 변경하고 연결된 follow_up을 COMPLETED 처리한다")
+    @DisplayName("First round message sent marks follow-up SENT")
+    void markFirstRoundMessageTemplateSentMarksFollowUpSent() {
+        UUID storeId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID messageTemplateId = UUID.randomUUID();
+        OffsetDateTime sentAt = OffsetDateTime.parse("2026-07-08T15:20:00+09:00");
+        Store store = store(storeId);
+        Service service = service(UUID.randomUUID(), store, "PT");
+        User actorUser = user(userId, store, "counselor");
+        Customer customer = customer(UUID.randomUUID(), store, null, inflowPathOption(UUID.randomUUID(), store));
+        Consultation latestConsultation = consultation(
+                UUID.randomUUID(),
+                customer,
+                actorUser,
+                service,
+                1,
+                AiAnalysisStatus.COMPLETED
+        );
+        FollowUp followUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(latestConsultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 10))
+                .status(FollowUpStatus.PENDING)
+                .contactRound(1)
+                .build();
+        MessageTemplate messageTemplate = messageTemplate(
+                messageTemplateId,
+                customer,
+                followUp,
+                OffsetDateTime.parse("2026-07-08T15:00:00+09:00")
+        );
+
+        when(messageTemplateRepository.findByIdAndCustomer_Store_Id(messageTemplateId, storeId))
+                .thenReturn(Optional.of(messageTemplate));
+        when(userRepository.findByIdAndStore_Id(userId, storeId)).thenReturn(Optional.of(actorUser));
+
+        MessageTemplateMarkSentResponse response = customerService.markMessageTemplateSent(
+                storeId,
+                userId,
+                messageTemplateId,
+                messageTemplateMarkSentRequest(sentAt)
+        );
+
+        assertThat(response.getFollowUpStatus()).isEqualTo(FollowUpStatus.SENT);
+        assertThat(response.getContactRound()).isEqualTo(1);
+        assertThat(followUp.getStatus()).isEqualTo(FollowUpStatus.SENT);
+        assertThat(messageTemplate.getDeliveryStatus()).isEqualTo("SENT");
+        verify(customerActivityTimelineRepository).save(any(CustomerActivityTimeline.class));
+    }
+
+    @Test
+    @DisplayName("Second round message sent marks follow-up SENT")
     void markMessageTemplateSent() {
         UUID storeId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
@@ -2289,6 +2341,25 @@ class CustomerServiceTest {
                         && newFollowUpId.equals(timeline.getRelatedId())
                         && FollowUpStatus.PENDING.equals(timeline.getBeforeValue().get("status"))
                         && FollowUpStatus.PENDING.equals(timeline.getAfterValue().get("status"))
+        ));
+    }
+
+    @Test
+    @DisplayName("Active 1st round PENDING follow-up regenerates as 1st round PENDING")
+    void regenerateFirstRoundPendingNextActionKeepsFirstRound() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.PENDING, 1, 1);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(1);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 1
         ));
     }
 

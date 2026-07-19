@@ -157,21 +157,33 @@ class FollowUpManagementServiceTest {
         FollowUpBoardQuery query = new FollowUpBoardQuery();
         query.setTab("TODAY");
         when(queryRepository.findBoardRows(eq(storeId), any(), any()))
-                .thenReturn(List.of(boardRow(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        1,
-                        "sent",
-                        90,
-                        UUID.randomUUID(),
-                        "SENT"
-                )));
+                .thenReturn(List.of(
+                        boardRow(
+                                UUID.randomUUID(),
+                                UUID.randomUUID(),
+                                1,
+                                "pending",
+                                80,
+                                UUID.randomUUID(),
+                                "PENDING"
+                        ),
+                        boardRow(
+                                UUID.randomUUID(),
+                                UUID.randomUUID(),
+                                1,
+                                "sent",
+                                90,
+                                UUID.randomUUID(),
+                                "SENT"
+                        )
+                ));
         when(queryRepository.findNonConversionReasons(anyCollection())).thenReturn(List.of());
 
         FollowUpBoardResponse response = followUpManagementService.getBoard(storeId, query);
 
-        assertThat(response.getColumns().get(0).getItems()).singleElement()
-                .satisfies(item -> assertThat(item.getFollowUpStatus().name()).isEqualTo("SENT"));
+        assertThat(response.getColumns().get(0).getItems())
+                .extracting(item -> item.getFollowUpStatus().name())
+                .containsExactlyInAnyOrder("PENDING", "SENT");
     }
 
     @Test
