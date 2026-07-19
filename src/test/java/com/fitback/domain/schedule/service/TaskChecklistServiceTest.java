@@ -30,7 +30,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,7 +60,7 @@ class TaskChecklistServiceTest {
 
         when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.empty());
 
-        taskChecklistService.createForScheduleIfConsultation(schedule);
+        taskChecklistService.createForSchedule(schedule);
 
         ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
         verify(taskChecklistRepository).save(captor.capture());
@@ -76,26 +75,61 @@ class TaskChecklistServiceTest {
     }
 
     @Test
-    @DisplayName("방문과 기타 일정은 체크리스트를 생성하지 않는다")
-    void doNotCreateForVisitAndEtcSchedule() {
-        taskChecklistService.createForScheduleIfConsultation(schedule(
-                UUID.randomUUID(),
+    @DisplayName("방문 일정 생성 시 체크리스트를 자동 생성한다")
+    void createForVisitSchedule() {
+        UUID scheduleId = UUID.randomUUID();
+        Schedule schedule = schedule(
+                scheduleId,
                 store(UUID.randomUUID()),
                 ScheduleType.VISIT,
                 "김민지 방문",
                 "김민지",
                 OffsetDateTime.parse("2026-10-15T10:30:00+09:00")
-        ));
-        taskChecklistService.createForScheduleIfConsultation(schedule(
-                UUID.randomUUID(),
+        );
+
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.empty());
+
+        taskChecklistService.createForSchedule(schedule);
+
+        ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
+        verify(taskChecklistRepository).save(captor.capture());
+        TaskChecklist saved = captor.getValue();
+        assertThat(saved.getSchedule()).isEqualTo(schedule);
+        assertThat(saved.getCustomer()).isNull();
+        assertThat(saved.getTitle()).isEqualTo("김민지 방문 10:30");
+        assertThat(saved.getTaskType()).isEqualTo(TaskType.VISIT);
+        assertThat(saved.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 15));
+        assertThat(saved.isDone()).isFalse();
+        assertThat(saved.getDoneAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("기타 일정 생성 시 체크리스트를 자동 생성한다")
+    void createForEtcSchedule() {
+        UUID scheduleId = UUID.randomUUID();
+        Schedule schedule = schedule(
+                scheduleId,
                 store(UUID.randomUUID()),
                 ScheduleType.ETC,
                 "기타 일정",
                 null,
                 OffsetDateTime.parse("2026-10-15T13:00:00+09:00")
-        ));
+        );
 
-        verifyNoInteractions(taskChecklistRepository);
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.empty());
+
+        taskChecklistService.createForSchedule(schedule);
+
+        ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
+        verify(taskChecklistRepository).save(captor.capture());
+        TaskChecklist saved = captor.getValue();
+        assertThat(saved.getSchedule()).isEqualTo(schedule);
+        assertThat(saved.getCustomer()).isNull();
+        assertThat(saved.getTitle()).isEqualTo("기타 일정 13:00");
+        assertThat(saved.getTaskType()).isEqualTo(TaskType.ETC);
+        assertThat(saved.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 15));
+        assertThat(saved.isDone()).isFalse();
+        assertThat(saved.getDoneAt()).isNull();
     }
 
     @Test
@@ -114,6 +148,7 @@ class TaskChecklistServiceTest {
                 UUID.randomUUID(),
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 false,
                 null
@@ -124,13 +159,14 @@ class TaskChecklistServiceTest {
         taskChecklistService.syncForUpdatedSchedule(schedule);
 
         assertThat(taskChecklist.getTitle()).isEqualTo("김민지 상담 14:00");
+        assertThat(taskChecklist.getTaskType()).isEqualTo(TaskType.CONSULTATION);
         assertThat(taskChecklist.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 16));
         verify(taskChecklistRepository, never()).save(org.mockito.ArgumentMatchers.any(TaskChecklist.class));
     }
 
     @Test
-    @DisplayName("상담 일정이 방문 일정으로 변경되면 연결 체크리스트를 삭제한다")
-    void deleteChecklistWhenConsultationChangedToVisit() {
+    @DisplayName("상담 일정이 방문 일정으로 변경되면 연결 체크리스트를 방문 유형으로 동기화한다")
+    void syncChecklistWhenConsultationChangedToVisit() {
         UUID scheduleId = UUID.randomUUID();
         Schedule schedule = schedule(
                 scheduleId,
@@ -140,10 +176,58 @@ class TaskChecklistServiceTest {
                 null,
                 OffsetDateTime.parse("2026-10-16T14:00:00+09:00")
         );
+        TaskChecklist taskChecklist = taskChecklist(
+                UUID.randomUUID(),
+                schedule,
+                "김민지 상담 10:30",
+                TaskType.CONSULTATION,
+                LocalDate.of(2026, 10, 15),
+                false,
+                null
+        );
+
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.of(taskChecklist));
 
         taskChecklistService.syncForUpdatedSchedule(schedule);
 
-        verify(taskChecklistRepository).deleteBySchedule_Id(scheduleId);
+        assertThat(taskChecklist.getTitle()).isEqualTo("방문 14:00");
+        assertThat(taskChecklist.getTaskType()).isEqualTo(TaskType.VISIT);
+        assertThat(taskChecklist.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 16));
+        verify(taskChecklistRepository, never()).deleteBySchedule_Id(scheduleId);
+        verify(taskChecklistRepository, never()).save(org.mockito.ArgumentMatchers.any(TaskChecklist.class));
+    }
+
+    @Test
+    @DisplayName("방문 일정이 기타 일정으로 변경되면 연결 체크리스트를 기타 유형으로 동기화한다")
+    void syncChecklistWhenVisitChangedToEtc() {
+        UUID scheduleId = UUID.randomUUID();
+        Schedule schedule = schedule(
+                scheduleId,
+                store(UUID.randomUUID()),
+                ScheduleType.ETC,
+                "기타 일정",
+                null,
+                OffsetDateTime.parse("2026-10-18T16:00:00+09:00")
+        );
+        TaskChecklist taskChecklist = taskChecklist(
+                UUID.randomUUID(),
+                schedule,
+                "김민지 방문 11:30",
+                TaskType.VISIT,
+                LocalDate.of(2026, 10, 15),
+                false,
+                null
+        );
+
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.of(taskChecklist));
+
+        taskChecklistService.syncForUpdatedSchedule(schedule);
+
+        assertThat(taskChecklist.getTitle()).isEqualTo("기타 일정 16:00");
+        assertThat(taskChecklist.getTaskType()).isEqualTo(TaskType.ETC);
+        assertThat(taskChecklist.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 18));
+        verify(taskChecklistRepository, never()).deleteBySchedule_Id(scheduleId);
+        verify(taskChecklistRepository, never()).save(org.mockito.ArgumentMatchers.any(TaskChecklist.class));
     }
 
     @Test
@@ -166,6 +250,7 @@ class TaskChecklistServiceTest {
         ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
         verify(taskChecklistRepository).save(captor.capture());
         assertThat(captor.getValue().getTitle()).isEqualTo("강호윤 상담 09:00");
+        assertThat(captor.getValue().getTaskType()).isEqualTo(TaskType.CONSULTATION);
         assertThat(captor.getValue().getDueDate()).isEqualTo(LocalDate.of(2026, 10, 17));
     }
 
@@ -175,7 +260,7 @@ class TaskChecklistServiceTest {
         UUID storeId = UUID.randomUUID();
         Store store = store(storeId);
         LocalDate date = LocalDate.of(2026, 10, 15);
-        Schedule schedule = schedule(
+        Schedule consultationSchedule = schedule(
                 UUID.randomUUID(),
                 store,
                 ScheduleType.CONSULTATION,
@@ -183,32 +268,70 @@ class TaskChecklistServiceTest {
                 "김민지",
                 OffsetDateTime.parse("2026-10-15T10:30:00+09:00")
         );
-        TaskChecklist taskChecklist = taskChecklist(
+        Schedule visitSchedule = schedule(
                 UUID.randomUUID(),
-                schedule,
+                store,
+                ScheduleType.VISIT,
+                "김민지 방문",
+                "김민지",
+                OffsetDateTime.parse("2026-10-15T11:30:00+09:00")
+        );
+        Schedule etcSchedule = schedule(
+                UUID.randomUUID(),
+                store,
+                ScheduleType.ETC,
+                "기타 일정",
+                null,
+                OffsetDateTime.parse("2026-10-15T13:00:00+09:00")
+        );
+        TaskChecklist consultationTask = taskChecklist(
+                UUID.randomUUID(),
+                consultationSchedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
+                date,
+                false,
+                null
+        );
+        TaskChecklist visitTask = taskChecklist(
+                UUID.randomUUID(),
+                visitSchedule,
+                "김민지 방문 11:30",
+                TaskType.VISIT,
+                date,
+                true,
+                OffsetDateTime.parse("2026-10-15T11:40:00+09:00")
+        );
+        TaskChecklist etcTask = taskChecklist(
+                UUID.randomUUID(),
+                etcSchedule,
+                "기타 일정 13:00",
+                TaskType.ETC,
                 date,
                 false,
                 null
         );
 
-        when(taskChecklistRepository.findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+        when(taskChecklistRepository.findAllByDateAndStoreIdOrderByScheduleStartAt(
                 date,
-                TaskType.CONSULTATION,
                 storeId
-        )).thenReturn(List.of(taskChecklist));
+        )).thenReturn(List.of(consultationTask, visitTask, etcTask));
 
         TaskChecklistListResponse response = taskChecklistService.getTaskChecklists(storeId, date);
 
         assertThat(response.getDate()).isEqualTo(date);
-        assertThat(response.getItems()).hasSize(1);
-        assertThat(response.getItems().get(0).getTaskId()).isEqualTo(taskChecklist.getId());
-        assertThat(response.getItems().get(0).getScheduleId()).isEqualTo(schedule.getId());
-        assertThat(response.getItems().get(0).getTitle()).isEqualTo("김민지 상담 10:30");
-        assertThat(response.getItems().get(0).isDone()).isFalse();
-        verify(taskChecklistRepository).findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+        assertThat(response.getItems()).hasSize(3);
+        assertThat(response.getItems())
+                .extracting(TaskChecklistResponse::getTaskType)
+                .containsExactly(TaskType.CONSULTATION, TaskType.VISIT, TaskType.ETC);
+        assertThat(response.getItems())
+                .extracting(TaskChecklistResponse::getTitle)
+                .containsExactly("김민지 상담 10:30", "김민지 방문 11:30", "기타 일정 13:00");
+        assertThat(response.getItems().get(0).getTaskId()).isEqualTo(consultationTask.getId());
+        assertThat(response.getItems().get(0).getScheduleId()).isEqualTo(consultationSchedule.getId());
+        assertThat(response.getItems().get(1).isDone()).isTrue();
+        verify(taskChecklistRepository).findAllByDateAndStoreIdOrderByScheduleStartAt(
                 date,
-                TaskType.CONSULTATION,
                 storeId
         );
     }
@@ -230,6 +353,7 @@ class TaskChecklistServiceTest {
                 taskId,
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 false,
                 null
@@ -263,6 +387,7 @@ class TaskChecklistServiceTest {
                 taskId,
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 true,
                 doneAt
@@ -296,6 +421,7 @@ class TaskChecklistServiceTest {
                 taskId,
                 schedule,
                 "김민지 상담 10:30",
+                TaskType.CONSULTATION,
                 LocalDate.of(2026, 10, 15),
                 false,
                 null
@@ -313,6 +439,7 @@ class TaskChecklistServiceTest {
             UUID taskId,
             Schedule schedule,
             String title,
+            TaskType taskType,
             LocalDate dueDate,
             boolean done,
             OffsetDateTime doneAt
@@ -321,7 +448,7 @@ class TaskChecklistServiceTest {
                 .id(taskId)
                 .schedule(schedule)
                 .title(title)
-                .taskType(TaskType.CONSULTATION)
+                .taskType(taskType)
                 .dueDate(dueDate)
                 .done(done)
                 .doneAt(doneAt)

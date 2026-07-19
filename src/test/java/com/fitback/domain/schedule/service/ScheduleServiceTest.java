@@ -36,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -176,7 +177,7 @@ class ScheduleServiceTest {
         assertThat(saved.getCustomer()).isNull();
         assertThat(saved.getConsultation()).isNull();
         assertThat(saved.getTitle()).isEqualTo("김민지 상담");
-        verify(taskChecklistService).createForScheduleIfConsultation(saved);
+        verify(taskChecklistService).createForSchedule(saved);
     }
 
     @Test
@@ -236,8 +237,9 @@ class ScheduleServiceTest {
         scheduleService.deleteSchedule(storeId, scheduleId);
 
         verify(scheduleRepository).findByIdAndStore_Id(scheduleId, storeId);
-        verify(scheduleRepository).delete(schedule);
-        verify(taskChecklistService, never()).deleteBySchedule(any(Schedule.class));
+        org.mockito.InOrder inOrder = inOrder(taskChecklistService, scheduleRepository);
+        inOrder.verify(taskChecklistService).deleteBySchedule(schedule);
+        inOrder.verify(scheduleRepository).delete(schedule);
     }
 
     @Test

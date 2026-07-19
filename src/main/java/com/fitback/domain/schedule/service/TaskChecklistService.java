@@ -37,9 +37,8 @@ public class TaskChecklistService {
         }
 
         List<TaskChecklistResponse> items = taskChecklistRepository
-                .findAllByDateAndTaskTypeAndStoreIdOrderByScheduleStartAt(
+                .findAllByDateAndStoreIdOrderByScheduleStartAt(
                         date,
-                        TaskType.CONSULTATION,
                         storeId
                 )
                 .stream()
@@ -70,8 +69,8 @@ public class TaskChecklistService {
     }
 
     @Transactional
-    public void createForScheduleIfConsultation(Schedule schedule) {
-        if (schedule == null || schedule.getScheduleType() != ScheduleType.CONSULTATION) {
+    public void createForSchedule(Schedule schedule) {
+        if (schedule == null) {
             return;
         }
         if (taskChecklistRepository.findBySchedule_Id(schedule.getId()).isPresent()) {
@@ -82,7 +81,7 @@ public class TaskChecklistService {
                 .schedule(schedule)
                 .customer(null)
                 .title(generateTitle(schedule))
-                .taskType(TaskType.CONSULTATION)
+                .taskType(toTaskType(schedule.getScheduleType()))
                 .dueDate(toDueDate(schedule))
                 .done(false)
                 .doneAt(null)
@@ -95,15 +94,14 @@ public class TaskChecklistService {
             return;
         }
 
-        if (schedule.getScheduleType() != ScheduleType.CONSULTATION) {
-            taskChecklistRepository.deleteBySchedule_Id(schedule.getId());
-            return;
-        }
-
         taskChecklistRepository.findBySchedule_Id(schedule.getId())
                 .ifPresentOrElse(
-                        taskChecklist -> taskChecklist.syncFromSchedule(generateTitle(schedule), toDueDate(schedule)),
-                        () -> createForScheduleIfConsultation(schedule)
+                        taskChecklist -> taskChecklist.syncFromSchedule(
+                                generateTitle(schedule),
+                                toTaskType(schedule.getScheduleType()),
+                                toDueDate(schedule)
+                        ),
+                        () -> createForSchedule(schedule)
                 );
     }
 
@@ -128,23 +126,28 @@ public class TaskChecklistService {
     }
 
     private String generateTitle(Schedule schedule) {
-        String customerName = normalizeBlankToNull(schedule.getCustomerName());
-        if (customerName == null) {
-            customerName = normalizeBlankToNull(schedule.getTitle());
+        String title = normalizeBlankToNull(schedule.getTitle());
+        if (title == null) {
+            title = normalizeBlankToNull(schedule.getCustomerName());
         }
-        if (customerName == null) {
-            customerName = "상담";
+        if (title == null) {
+            title = schedule.getScheduleType().name();
         }
 
         String time = schedule.getStartAt().toLocalTime().format(CHECKLIST_TIME_FORMATTER);
-        if (customerName.endsWith("상담")) {
-            return customerName + " " + time;
-        }
-        return customerName + " 상담 " + time;
+        return title + " " + time;
     }
 
     private LocalDate toDueDate(Schedule schedule) {
         return schedule.getStartAt().toLocalDate();
+    }
+
+    private TaskType toTaskType(ScheduleType scheduleType) {
+        return switch (scheduleType) {
+            case CONSULTATION -> TaskType.CONSULTATION;
+            case VISIT -> TaskType.VISIT;
+            case ETC -> TaskType.ETC;
+        };
     }
 
     private String normalizeBlankToNull(String value) {

@@ -85,7 +85,7 @@ public class ScheduleService {
                 .build();
 
         Schedule savedSchedule = scheduleRepository.save(schedule);
-        taskChecklistService.createForScheduleIfConsultation(savedSchedule);
+        taskChecklistService.createForSchedule(savedSchedule);
 
         return toScheduleResponse(savedSchedule);
     }
@@ -121,6 +121,7 @@ public class ScheduleService {
         Schedule schedule = scheduleRepository.findByIdAndStore_Id(scheduleId, storeId)
                 .orElseThrow(() -> new BusinessException(ScheduleErrorCode.SCHEDULE_NOT_FOUND));
 
+        taskChecklistService.deleteBySchedule(schedule);
         scheduleRepository.delete(schedule);
     }
 
