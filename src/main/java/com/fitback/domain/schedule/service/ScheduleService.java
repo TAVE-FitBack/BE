@@ -85,7 +85,7 @@ public class ScheduleService {
                 .build();
 
         Schedule savedSchedule = scheduleRepository.save(schedule);
-        taskChecklistService.createForScheduleIfConsultation(savedSchedule);
+        taskChecklistService.createForSchedule(savedSchedule);
 
         return toScheduleResponse(savedSchedule);
     }

@@ -176,7 +176,7 @@ class ScheduleServiceTest {
         assertThat(saved.getCustomer()).isNull();
         assertThat(saved.getConsultation()).isNull();
         assertThat(saved.getTitle()).isEqualTo("김민지 상담");
-        verify(taskChecklistService).createForScheduleIfConsultation(saved);
+        verify(taskChecklistService).createForSchedule(saved);
     }
 
     @Test

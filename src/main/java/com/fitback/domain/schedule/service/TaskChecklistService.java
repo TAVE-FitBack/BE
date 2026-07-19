@@ -70,8 +70,8 @@ public class TaskChecklistService {
     }
 
     @Transactional
-    public void createForScheduleIfConsultation(Schedule schedule) {
-        if (schedule == null || schedule.getScheduleType() != ScheduleType.CONSULTATION) {
+    public void createForSchedule(Schedule schedule) {
+        if (schedule == null) {
             return;
         }
         if (taskChecklistRepository.findBySchedule_Id(schedule.getId()).isPresent()) {
@@ -82,7 +82,7 @@ public class TaskChecklistService {
                 .schedule(schedule)
                 .customer(null)
                 .title(generateTitle(schedule))
-                .taskType(TaskType.CONSULTATION)
+                .taskType(toTaskType(schedule.getScheduleType()))
                 .dueDate(toDueDate(schedule))
                 .done(false)
                 .doneAt(null)
@@ -103,7 +103,7 @@ public class TaskChecklistService {
         taskChecklistRepository.findBySchedule_Id(schedule.getId())
                 .ifPresentOrElse(
                         taskChecklist -> taskChecklist.syncFromSchedule(generateTitle(schedule), toDueDate(schedule)),
-                        () -> createForScheduleIfConsultation(schedule)
+                        () -> createForSchedule(schedule)
                 );
     }
 
@@ -128,19 +128,16 @@ public class TaskChecklistService {
     }
 
     private String generateTitle(Schedule schedule) {
-        String customerName = normalizeBlankToNull(schedule.getCustomerName());
-        if (customerName == null) {
-            customerName = normalizeBlankToNull(schedule.getTitle());
+        String title = normalizeBlankToNull(schedule.getTitle());
+        if (title == null) {
+            title = normalizeBlankToNull(schedule.getCustomerName());
         }
-        if (customerName == null) {
-            customerName = "상담";
+        if (title == null) {
+            title = schedule.getScheduleType().name();
         }
 
         String time = schedule.getStartAt().toLocalTime().format(CHECKLIST_TIME_FORMATTER);
-        if (customerName.endsWith("상담")) {
-            return customerName + " " + time;
-        }
-        return customerName + " 상담 " + time;
+        return title + " " + time;
     }
 
     private LocalDate toDueDate(Schedule schedule) {

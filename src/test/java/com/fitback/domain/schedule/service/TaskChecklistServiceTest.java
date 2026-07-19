@@ -30,7 +30,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,7 +60,7 @@ class TaskChecklistServiceTest {
 
         when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.empty());
 
-        taskChecklistService.createForScheduleIfConsultation(schedule);
+        taskChecklistService.createForSchedule(schedule);
 
         ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
         verify(taskChecklistRepository).save(captor.capture());
@@ -76,26 +75,61 @@ class TaskChecklistServiceTest {
     }
 
     @Test
-    @DisplayName("방문과 기타 일정은 체크리스트를 생성하지 않는다")
-    void doNotCreateForVisitAndEtcSchedule() {
-        taskChecklistService.createForScheduleIfConsultation(schedule(
-                UUID.randomUUID(),
+    @DisplayName("방문 일정 생성 시 체크리스트를 자동 생성한다")
+    void createForVisitSchedule() {
+        UUID scheduleId = UUID.randomUUID();
+        Schedule schedule = schedule(
+                scheduleId,
                 store(UUID.randomUUID()),
                 ScheduleType.VISIT,
                 "김민지 방문",
                 "김민지",
                 OffsetDateTime.parse("2026-10-15T10:30:00+09:00")
-        ));
-        taskChecklistService.createForScheduleIfConsultation(schedule(
-                UUID.randomUUID(),
+        );
+
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.empty());
+
+        taskChecklistService.createForSchedule(schedule);
+
+        ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
+        verify(taskChecklistRepository).save(captor.capture());
+        TaskChecklist saved = captor.getValue();
+        assertThat(saved.getSchedule()).isEqualTo(schedule);
+        assertThat(saved.getCustomer()).isNull();
+        assertThat(saved.getTitle()).isEqualTo("김민지 방문 10:30");
+        assertThat(saved.getTaskType()).isEqualTo(TaskType.VISIT);
+        assertThat(saved.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 15));
+        assertThat(saved.isDone()).isFalse();
+        assertThat(saved.getDoneAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("기타 일정 생성 시 체크리스트를 자동 생성한다")
+    void createForEtcSchedule() {
+        UUID scheduleId = UUID.randomUUID();
+        Schedule schedule = schedule(
+                scheduleId,
                 store(UUID.randomUUID()),
                 ScheduleType.ETC,
                 "기타 일정",
                 null,
                 OffsetDateTime.parse("2026-10-15T13:00:00+09:00")
-        ));
+        );
 
-        verifyNoInteractions(taskChecklistRepository);
+        when(taskChecklistRepository.findBySchedule_Id(scheduleId)).thenReturn(Optional.empty());
+
+        taskChecklistService.createForSchedule(schedule);
+
+        ArgumentCaptor<TaskChecklist> captor = ArgumentCaptor.forClass(TaskChecklist.class);
+        verify(taskChecklistRepository).save(captor.capture());
+        TaskChecklist saved = captor.getValue();
+        assertThat(saved.getSchedule()).isEqualTo(schedule);
+        assertThat(saved.getCustomer()).isNull();
+        assertThat(saved.getTitle()).isEqualTo("기타 일정 13:00");
+        assertThat(saved.getTaskType()).isEqualTo(TaskType.ETC);
+        assertThat(saved.getDueDate()).isEqualTo(LocalDate.of(2026, 10, 15));
+        assertThat(saved.isDone()).isFalse();
+        assertThat(saved.getDoneAt()).isNull();
     }
 
     @Test
