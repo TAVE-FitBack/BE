@@ -236,7 +236,7 @@ public class FollowUpManagementQueryRepository {
                                    SELECT 1
                                    FROM follow_up pending_f
                                    WHERE pending_f.customer_id = c.id
-                                     AND pending_f.status = 'PENDING'
+                                     AND pending_f.status IN ('PENDING', 'SENT')
                                )
                            ) AS follow_up_completed,
                            f.updated_at AS follow_up_updated_at,
@@ -266,7 +266,13 @@ public class FollowUpManagementQueryRepository {
                         LIMIT 1
                     ) latest_message ON TRUE
                     WHERE c.store_id = :storeId
-                      AND f.status IN ('COMPLETED', 'CLOSED')
+                      AND (
+                          f.status = 'CLOSED'
+                          OR (
+                              f.status = 'COMPLETED'
+                              AND f.contact_round = 3
+                          )
+                      )
                 """ + filters + """
                 )
                 """;
