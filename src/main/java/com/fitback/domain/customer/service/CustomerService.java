@@ -21,6 +21,7 @@ import com.fitback.domain.consultation.service.ConsultationSignalService;
 import com.fitback.domain.customer.client.AiMessageClient;
 import com.fitback.domain.customer.dto.request.AiMessageGenerateRequest;
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.CustomerInfoUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.FollowUpReplyUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
@@ -30,6 +31,7 @@ import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.response.AiMessageGenerateResponse;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
+import com.fitback.domain.customer.dto.response.CustomerInfoUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.FollowUpReplyUpdateResponse;
@@ -75,6 +77,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -761,6 +764,63 @@ public class CustomerService {
                 .status(customer.getStatus())
                 .followUpAction(followUpAction)
                 .nextActionRegenerationAvailable(afterStatus == CustomerStatus.NO_SHOW)
+                .build();
+    }
+
+    @Transactional
+    public CustomerInfoUpdateResponse updateCustomerInfo(
+            UUID storeId,
+            UUID customerId,
+            CustomerInfoUpdateRequest request
+    ) {
+        if (storeId == null) {
+            throw new BusinessException(CustomerErrorCode.STORE_NOT_ASSIGNED);
+        }
+
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new BusinessException(CustomerErrorCode.CUSTOMER_NOT_FOUND));
+
+        if (!storeId.equals(customer.getStore().getId())) {
+            throw new BusinessException(CustomerErrorCode.CUSTOMER_ACCESS_DENIED);
+        }
+
+        Consultation latestConsultation = consultationRepository
+                .findFirstByCustomerIdOrderBySessionNoDesc(customerId)
+                .orElseThrow(() -> new BusinessException(ConsultationErrorCode.CONSULTATION_NOT_FOUND));
+
+        if (!request.getPhoneNum().equals(customer.getPhoneNum())) {
+            customerRepository.findByPhoneNumAndStoreId(request.getPhoneNum(), storeId)
+                    .filter(existing -> !existing.getId().equals(customerId))
+                    .ifPresent(existing -> {
+                        throw new BusinessException(ConsultationErrorCode.DUPLICATE_CUSTOMER_PHONE);
+                    });
+        }
+
+        customer.updateBasicInfo(
+                request.getName(),
+                request.getGender(),
+                request.getBirthDate(),
+                request.getPhoneNum()
+        );
+
+        latestConsultation.updateConsultedAt(request.getVisitAt());
+
+        LocalDate visitDate = request.getVisitAt().toLocalDate();
+
+        customer.updateLatestConsultAt(visitDate);
+
+        if (latestConsultation.getSessionNo() == 1) {
+            customer.updateFirstConsultAt(visitDate);
+        }
+
+        return CustomerInfoUpdateResponse.builder()
+                .customerId(customer.getId())
+                .name(customer.getName())
+                .birthDate(customer.getBirthDate())
+                .gender(customer.getGender())
+                .phoneNum(customer.getPhoneNum())
+                .consultationId(latestConsultation.getId())
+                .visitAt(latestConsultation.getConsultedAt())
                 .build();
     }
 

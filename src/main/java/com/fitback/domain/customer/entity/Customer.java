@@ -85,4 +85,15 @@ public class Customer extends BaseTimeEntity {
     public void updateLatestConsultAt(LocalDate latestConsultAt) {
         this.latestConsultAt = latestConsultAt;
     }
+
+    public void updateFirstConsultAt(LocalDate firstConsultAt) {
+        this.firstConsultAt = firstConsultAt;
+    }
+
+    public void updateBasicInfo(String name, Gender gender, LocalDate birthDate, String phoneNum) {
+        this.name = name;
+        this.gender = gender;
+        this.birthDate = birthDate;
+        this.phoneNum = phoneNum;
+    }
 }
