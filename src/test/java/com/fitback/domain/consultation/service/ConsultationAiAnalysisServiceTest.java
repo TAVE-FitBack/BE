@@ -2,6 +2,7 @@ package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
+import com.fitback.domain.consultation.dto.request.AiConsultationGraphSyncRequest;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.entity.Consultation;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
@@ -42,6 +43,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -55,6 +57,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -358,6 +361,155 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("PENDING 고객은 follow_up과 follow_up_ai_insight를 포함해 graph sync를 호출한다")
+    void analyzePendingCustomerSyncsGraphWithFollowUpAndInsight() {
+        UUID consultationId = UUID.randomUUID();
+        UUID reasonId = UUID.randomUUID();
+        Customer customer = customer();
+        Service service = serviceForStore(customer.getStore());
+        Consultation consultation = consultation(consultationId, customer, service, AiAnalysisStatus.PROCESSING);
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .memo("가격 부담을 낮춘 시작 옵션을 안내")
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+        when(nonConversionReasonRepository.saveAll(any())).thenAnswer(invocation -> {
+            List<NonConversionReason> reasons = invocation.getArgument(0);
+            ReflectionTestUtils.setField(reasons.get(0), "id", reasonId);
+            return reasons;
+        });
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
+                customer.getId(),
+                FollowUpStatus.PENDING
+        )).thenReturn(Optional.empty());
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        ArgumentCaptor<AiConsultationGraphSyncRequest> syncCaptor =
+                ArgumentCaptor.forClass(AiConsultationGraphSyncRequest.class);
+        verify(aiConsultationClient).syncConsultationGraph(syncCaptor.capture());
+
+        AiConsultationGraphSyncRequest request = syncCaptor.getValue();
+        assertThat(request.getStore().getStoreId()).isEqualTo(customer.getStore().getId());
+        assertThat(request.getService().getStoreId()).isEqualTo(request.getStore().getStoreId());
+        assertThat(request.getCustomer().getStoreId()).isEqualTo(request.getStore().getStoreId());
+        assertThat(request.getConsultation().getCustomerId()).isEqualTo(request.getCustomer().getCustomerId());
+        assertThat(request.getConsultation().getConsultedServiceId()).isEqualTo(request.getService().getServiceId());
+        assertThat(request.getCustomerAiInsight().getCustomerId()).isEqualTo(request.getCustomer().getCustomerId());
+        assertThat(request.getNonConversionReasons()).hasSize(1);
+        assertThat(request.getNonConversionReasons().get(0).getReasonId()).isEqualTo(reasonId);
+        assertThat(request.getNonConversionReasons().get(0).getCustomerId()).isEqualTo(request.getCustomer().getCustomerId());
+        assertThat(request.getNonConversionReasons().get(0).getConsultationId()).isEqualTo(request.getConsultation().getConsultationId());
+        assertThat(request.getFollowUp()).isNotNull();
+        assertThat(request.getFollowUp().getCustomerId()).isEqualTo(request.getCustomer().getCustomerId());
+        assertThat(request.getFollowUp().getConsultationId()).isEqualTo(request.getConsultation().getConsultationId());
+        assertThat(request.getFollowUpAiInsight()).isNotNull();
+        assertThat(request.getFollowUpAiInsight().getFollowUpId()).isEqualTo(request.getFollowUp().getFollowUpId());
+    }
+
+    @Test
+    @DisplayName("REGISTERED 고객은 follow-up 관련 필드를 null로 graph sync 호출한다")
+    void analyzeRegisteredCustomerSyncsGraphWithNullFollowUpFields() {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customerWithStatus(CustomerStatus.REGISTERED);
+        Service service = serviceForStore(customer.getStore());
+        Consultation consultation = consultation(consultationId, customer, service, AiAnalysisStatus.PROCESSING);
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        ArgumentCaptor<AiConsultationGraphSyncRequest> syncCaptor =
+                ArgumentCaptor.forClass(AiConsultationGraphSyncRequest.class);
+        verify(aiConsultationClient).syncConsultationGraph(syncCaptor.capture());
+
+        assertThat(syncCaptor.getValue().getFollowUp()).isNull();
+        assertThat(syncCaptor.getValue().getFollowUpAiInsight()).isNull();
+    }
+
+    @Test
+    @DisplayName("non_conversion_reason이 없으면 빈 배열로 graph sync 호출한다")
+    void analyzeConsultationSyncsGraphWithEmptyNonConversionReasons() {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customer();
+        Service service = serviceForStore(customer.getStore());
+        Consultation consultation = consultation(consultationId, customer, service, AiAnalysisStatus.PROCESSING);
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
+                .thenReturn(aiResponseWithoutNonConversionReasons());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
+                customer.getId(),
+                FollowUpStatus.PENDING
+        )).thenReturn(Optional.empty());
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        ArgumentCaptor<AiConsultationGraphSyncRequest> syncCaptor =
+                ArgumentCaptor.forClass(AiConsultationGraphSyncRequest.class);
+        verify(aiConsultationClient).syncConsultationGraph(syncCaptor.capture());
+
+        assertThat(syncCaptor.getValue().getNonConversionReasons()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("graph sync 실패는 예외로 전파하지 않고 RDS 저장 결과를 유지한다")
+    void analyzeConsultationKeepsSavedResultWhenGraphSyncFails() {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customer();
+        Service service = serviceForStore(customer.getStore());
+        Consultation consultation = consultation(consultationId, customer, service, AiAnalysisStatus.PROCESSING);
+        FollowUp savedFollowUp = FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(FollowUpStatus.PENDING)
+                .build();
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
+                customer.getId(),
+                FollowUpStatus.PENDING
+        )).thenReturn(Optional.empty());
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+        doThrow(new RuntimeException("sync failed"))
+                .when(aiConsultationClient)
+                .syncConsultationGraph(any(AiConsultationGraphSyncRequest.class));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.COMPLETED);
+        assertThat(consultation.getSummary()).isEqualTo("가격 부담은 있으나 운동 의지가 있는 고객입니다.");
+        verify(customerAiInsightRepository).save(any(CustomerAiInsight.class));
+        verify(nonConversionReasonRepository).deleteAllByCustomerId(customer.getId());
+        verify(followUpRepository).save(any(FollowUp.class));
+        verify(followUpAiInsightRepository).save(any(FollowUpAiInsight.class));
+        verify(aiConsultationClient).syncConsultationGraph(any(AiConsultationGraphSyncRequest.class));
+    }
+
+    @Test
     @DisplayName("상담이 없으면 로그만 남기고 상태 변경 없이 중단한다")
     void analyzeConsultationSkipsWhenConsultationNotFound() {
         UUID consultationId = UUID.randomUUID();
@@ -583,9 +735,13 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     private Service service() {
+        return serviceForStore(store());
+    }
+
+    private Service serviceForStore(Store store) {
         return Service.builder()
                 .id(UUID.randomUUID())
-                .store(store())
+                .store(store)
                 .name("PT")
                 .active(true)
                 .build();
@@ -645,6 +801,34 @@ class ConsultationAiAnalysisServiceTest {
                         .reasonBasis("가격이 부담된다고 언급했습니다.")
                         .confidence("HIGH")
                         .build()))
+                .nextBestAction(AiConsultationAnalyzeResponse.NextBestAction.builder()
+                        .title("부담 적은 시작 옵션 제안")
+                        .description("큰 패키지보다 시작 부담이 낮은 옵션을 안내합니다.")
+                        .build())
+                .followUp(AiConsultationAnalyzeResponse.FollowUp.builder()
+                        .recommendContactDate(LocalDate.of(2026, 7, 3))
+                        .memo("가격 부담을 낮춘 시작 옵션을 안내")
+                        .build())
+                .followUpInsight(AiConsultationAnalyzeResponse.FollowUpInsight.builder()
+                        .persuasionPoint(Map.of("main", "초기 비용 부담 완화"))
+                        .cautionNote("무리한 할인 압박은 피합니다.")
+                        .actionBasis(Map.of(
+                                "primaryReason", "PRICE_BURDEN",
+                                "basis", "가격 부담이 주요 이탈 요인으로 판단됨"
+                        ))
+                        .build())
+                .build();
+    }
+
+    private AiConsultationAnalyzeResponse aiResponseWithoutNonConversionReasons() {
+        return AiConsultationAnalyzeResponse.builder()
+                .summary("가격 부담은 있으나 운동 의지가 있는 고객입니다.")
+                .customerInsight(AiConsultationAnalyzeResponse.CustomerInsight.builder()
+                        .leadTemperature("WARM")
+                        .temperatureBasis("가격 부담은 있으나 등록 의향이 남아 있습니다.")
+                        .priorityScore(78)
+                        .build())
+                .nonConversionReasons(List.of())
                 .nextBestAction(AiConsultationAnalyzeResponse.NextBestAction.builder()
                         .title("부담 적은 시작 옵션 제안")
                         .description("큰 패키지보다 시작 부담이 낮은 옵션을 안내합니다.")
