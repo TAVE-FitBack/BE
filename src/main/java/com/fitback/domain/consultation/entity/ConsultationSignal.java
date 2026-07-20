@@ -24,7 +24,7 @@ import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Builder
@@ -71,7 +71,7 @@ public class ConsultationSignal {
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 
     public static ConsultationSignal from(Consultation consultation, AiCheckPreviewItemRequest item) {
         return ConsultationSignal.builder()
