@@ -15,4 +15,5 @@ public class StoreSetupResponse {
     private UUID storeId;
     private String name;
     private StoreType storeType;
+    private String customStoreType;
 }

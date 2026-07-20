@@ -41,6 +41,7 @@ public class StoreService {
                 .phone(request.getPhone())
                 .address(request.getAddress())
                 .businessNumber(request.getBusinessNumber())
+                .customStoreType(request.getCustomStoreType())
                 .build();
         storeRepository.save(store);
 

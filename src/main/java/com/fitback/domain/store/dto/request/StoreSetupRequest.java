@@ -19,6 +19,9 @@ public class StoreSetupRequest {
     @NotNull(message = "업종을 선택하세요.")
     private StoreType storeType;
 
+    @Size(max = 100, message = "매장 유형명은 100자 이하여야 합니다.")
+    private String customStoreType;
+    
     private String phone;
 
     @Pattern(regexp = "^\\d{3}-\\d{2}-\\d{5}$", message = "사업자번호 형식이 올바르지 않습니다.")

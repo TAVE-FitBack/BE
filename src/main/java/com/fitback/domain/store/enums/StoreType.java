@@ -2,5 +2,12 @@ package com.fitback.domain.store.enums;
 
 public enum StoreType {
     GYM,
-    OTHER // 추가 예정
+    PT_STUDIO,
+    PILATES,
+    GOLF_ACADEMY,
+    YOGA,
+    CROSSFIT,
+    SPINNING,
+    SWIMMING,
+    OTHER
 }
