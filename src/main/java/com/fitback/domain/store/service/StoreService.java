@@ -51,6 +51,7 @@ public class StoreService {
                 .storeId(store.getId())
                 .name(store.getName())
                 .storeType(store.getStoreType())
+                .customStoreType(store.getCustomStoreType())
                 .build();
     }
 }
