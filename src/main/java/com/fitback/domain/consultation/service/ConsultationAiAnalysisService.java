@@ -165,26 +165,39 @@ public class ConsultationAiAnalysisService {
                 .build();
     }
 
-    private void saveAnalysisSuccess(UUID consultationId, AiConsultationAnalyzeResponse response) {
-        transactionTemplate().executeWithoutResult(status -> {
+    private SavedAnalysisResult saveAnalysisSuccess(UUID consultationId, AiConsultationAnalyzeResponse response) {
+        return transactionTemplate().execute(status -> {
             Consultation consultation = consultationRepository.findById(consultationId)
                     .orElseThrow(() -> new IllegalStateException("consultation not found during AI analysis save"));
             OffsetDateTime now = OffsetDateTime.now();
             Customer customer = consultation.getCustomer();
+            Service service = consultation.getConsultedService();
 
             consultation.completeAiAnalysis(response.getSummary(), now);
-            upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
-            replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
+            CustomerAiInsight customerAiInsight = upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
+            List<NonConversionReason> nonConversionReasons =
+                    replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
 
             FollowUp followUp = null;
+            FollowUpAiInsight followUpAiInsight = null;
             if (shouldCreateFollowUp(customer)) {
                 followUp = replaceActiveFollowUp(customer, consultation, response);
-                saveFollowUpAiInsight(followUp, response, now);
+                followUpAiInsight = saveFollowUpAiInsight(followUp, response, now);
             }
             saveAiAnalysisCompletedTimeline(consultation, response, followUp, now);
             if (followUp != null) {
                 saveNextActionCreatedTimeline(consultation, followUp, response, now);
             }
+
+            return new SavedAnalysisResult(
+                    consultation,
+                    customer,
+                    service,
+                    customerAiInsight,
+                    nonConversionReasons,
+                    followUp,
+                    followUpAiInsight
+            );
         });
     }
 
@@ -250,7 +263,7 @@ public class ConsultationAiAnalysisService {
         return ConsultationErrorCode.AI_ANALYSIS_FAILED.name();
     }
 
-    private void upsertCustomerAiInsight(
+    private CustomerAiInsight upsertCustomerAiInsight(
             Customer customer,
             AiConsultationAnalyzeResponse.CustomerInsight insight,
             OffsetDateTime analyzedAt
@@ -267,10 +280,10 @@ public class ConsultationAiAnalysisService {
                 analyzedAt
         );
 
-        customerAiInsightRepository.save(customerAiInsight);
+        return customerAiInsightRepository.save(customerAiInsight);
     }
 
-    private void replaceNonConversionReasons(
+    private List<NonConversionReason> replaceNonConversionReasons(
             Customer customer,
             Consultation consultation,
             List<AiConsultationAnalyzeResponse.NonConversionReason> reasons
@@ -278,7 +291,7 @@ public class ConsultationAiAnalysisService {
         nonConversionReasonRepository.deleteAllByCustomerId(customer.getId());
 
         if (reasons == null || reasons.isEmpty()) {
-            return;
+            return List.of();
         }
 
         List<NonConversionReason> entities = reasons.stream()
@@ -292,7 +305,7 @@ public class ConsultationAiAnalysisService {
                         .build())
                 .toList();
 
-        nonConversionReasonRepository.saveAll(entities);
+        return nonConversionReasonRepository.saveAll(entities);
     }
 
     private FollowUp replaceActiveFollowUp(
@@ -322,7 +335,7 @@ public class ConsultationAiAnalysisService {
         return response.getNextBestAction().getTitle();
     }
 
-    private void saveFollowUpAiInsight(
+    private FollowUpAiInsight saveFollowUpAiInsight(
             FollowUp followUp,
             AiConsultationAnalyzeResponse response,
             OffsetDateTime analyzedAt
@@ -333,7 +346,7 @@ public class ConsultationAiAnalysisService {
                 : Map.of();
         Map<String, Object> actionBasis = buildActionBasis(response);
 
-        followUpAiInsightRepository.save(FollowUpAiInsight.builder()
+        return followUpAiInsightRepository.save(FollowUpAiInsight.builder()
                 .followUp(followUp)
                 .persuasionPoint(persuasionPoint)
                 .cautionNote(insight != null ? insight.getCautionNote() : null)
@@ -473,5 +486,16 @@ public class ConsultationAiAnalysisService {
 
     private TransactionTemplate transactionTemplate() {
         return new TransactionTemplate(transactionManager);
+    }
+
+    private record SavedAnalysisResult(
+            Consultation consultation,
+            Customer customer,
+            Service service,
+            CustomerAiInsight customerAiInsight,
+            List<NonConversionReason> nonConversionReasons,
+            FollowUp followUp,
+            FollowUpAiInsight followUpAiInsight
+    ) {
     }
 }
