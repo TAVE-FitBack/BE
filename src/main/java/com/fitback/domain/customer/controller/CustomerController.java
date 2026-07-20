@@ -1,12 +1,14 @@
 package com.fitback.domain.customer.controller;
 
 import com.fitback.domain.customer.dto.request.CustomerAiAnalysisUpdateRequest;
+import com.fitback.domain.customer.dto.request.CustomerInfoUpdateRequest;
 import com.fitback.domain.customer.dto.request.CustomerStatusUpdateRequest;
 import com.fitback.domain.customer.dto.request.MessageTemplateCreateRequest;
 import com.fitback.domain.customer.dto.request.NextActionRegenerateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCreateRequest;
 import com.fitback.domain.customer.dto.request.ReconsultationCheckPreviewRequest;
 import com.fitback.domain.customer.dto.response.CustomerAiAnalysisUpdateResponse;
+import com.fitback.domain.customer.dto.response.CustomerInfoUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerStatusUpdateResponse;
 import com.fitback.domain.customer.dto.response.CustomerDetailResponse;
 import com.fitback.domain.customer.dto.response.MessageTemplateCreateResponse;
@@ -145,6 +147,17 @@ public class CustomerController {
             @Valid @RequestBody CustomerStatusUpdateRequest request
     ) {
         CustomerStatusUpdateResponse response = customerService.updateCustomerStatus(storeId, customerId, request);
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
+    }
+
+    @PatchMapping("/{customerId}/info")
+    @Operation(summary = "고객 정보 수정", description = "고객의 이름, 생년월일, 성별, 연락처와 최근 상담의 방문 시간을 수정합니다.")
+    public ResponseEntity<ApiResponse<CustomerInfoUpdateResponse>> updateCustomerInfo(
+            @Parameter(hidden = true) @AuthenticationPrincipal(expression = "user.storeId") UUID storeId,
+            @Parameter(description = "Customer ID") @PathVariable UUID customerId,
+            @Valid @RequestBody CustomerInfoUpdateRequest request
+    ) {
+        CustomerInfoUpdateResponse response = customerService.updateCustomerInfo(storeId, customerId, request);
         return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }

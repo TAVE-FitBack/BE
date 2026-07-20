@@ -87,4 +87,8 @@ public class Consultation extends BaseTimeEntity {
     public void markAiAnalysisFailed() {
         this.aiAnalysisStatus = AiAnalysisStatus.FAILED;
     }
+
+    public void updateConsultedAt(OffsetDateTime consultedAt) {
+        this.consultedAt = consultedAt;
+    }
 }
