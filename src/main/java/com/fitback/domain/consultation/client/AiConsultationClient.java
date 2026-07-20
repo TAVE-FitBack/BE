@@ -2,6 +2,7 @@ package com.fitback.domain.consultation.client;
 
 import com.fitback.domain.consultation.dto.request.AiCheckPreviewRequest;
 import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
+import com.fitback.domain.consultation.dto.request.AiConsultationGraphSyncRequest;
 import com.fitback.domain.consultation.dto.request.AiNextActionRegenerateRequest;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.dto.response.AiNextActionRegenerateResponse;
@@ -28,6 +29,7 @@ public class AiConsultationClient {
     private static final String CHECK_PREVIEW_PATH = "/ai/v1/consultations/check-preview";
     private static final String ANALYZE_PATH = "/ai/v1/consultations/analyze";
     private static final String NEXT_ACTION_PATH = "/ai/v1/consultations/next-action";
+    private static final String GRAPH_SYNC_PATH = "/ai/v1/graph/consultations/sync";
 
     private final RestClient restClient;
 
@@ -108,6 +110,29 @@ public class AiConsultationClient {
             throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
         } catch (RestClientException | IllegalArgumentException e) {
             log.warn("AI next-action response invalid", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        }
+    }
+
+    public Map<String, Object> syncConsultationGraph(AiConsultationGraphSyncRequest request) {
+        try {
+            return restClient.post()
+                    .uri(GRAPH_SYNC_PATH)
+                    .body(request)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+        } catch (ResourceAccessException e) {
+            log.warn("AI consultation graph sync request failed", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_REQUEST_FAILED);
+        } catch (RestClientResponseException e) {
+            log.warn("AI consultation graph sync returned error status. status={}", e.getStatusCode(), e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_FAILED);
+        } catch (HttpMessageConversionException e) {
+            log.warn("AI consultation graph sync response parsing failed", e);
+            throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
+        } catch (RestClientException | IllegalArgumentException e) {
+            log.warn("AI consultation graph sync response invalid", e);
             throw new BusinessException(ConsultationErrorCode.AI_ANALYSIS_RESPONSE_INVALID);
         }
     }

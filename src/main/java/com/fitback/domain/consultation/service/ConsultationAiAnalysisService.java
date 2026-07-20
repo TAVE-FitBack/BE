@@ -2,6 +2,7 @@ package com.fitback.domain.consultation.service;
 
 import com.fitback.domain.consultation.client.AiConsultationClient;
 import com.fitback.domain.consultation.dto.request.AiConsultationAnalyzeRequest;
+import com.fitback.domain.consultation.dto.request.AiConsultationGraphSyncRequest;
 import com.fitback.domain.consultation.entity.ConsultationMaterial;
 import com.fitback.domain.consultation.dto.response.AiConsultationAnalyzeResponse;
 import com.fitback.domain.consultation.entity.Consultation;
@@ -67,7 +68,8 @@ public class ConsultationAiAnalysisService {
                 return;
             }
             AiConsultationAnalyzeResponse response = aiConsultationClient.analyzeConsultation(request);
-            saveAnalysisSuccess(consultationId, response);
+            SavedAnalysisResult savedAnalysisResult = saveAnalysisSuccess(consultationId, response);
+            syncConsultationGraph(savedAnalysisResult);
         } catch (RuntimeException e) {
             log.warn(
                     "AI consultation analysis failed. consultationId={}, status=FAILED",
@@ -165,27 +167,57 @@ public class ConsultationAiAnalysisService {
                 .build();
     }
 
-    private void saveAnalysisSuccess(UUID consultationId, AiConsultationAnalyzeResponse response) {
-        transactionTemplate().executeWithoutResult(status -> {
+    private SavedAnalysisResult saveAnalysisSuccess(UUID consultationId, AiConsultationAnalyzeResponse response) {
+        return transactionTemplate().execute(status -> {
             Consultation consultation = consultationRepository.findById(consultationId)
                     .orElseThrow(() -> new IllegalStateException("consultation not found during AI analysis save"));
             OffsetDateTime now = OffsetDateTime.now();
             Customer customer = consultation.getCustomer();
+            Service service = consultation.getConsultedService();
 
             consultation.completeAiAnalysis(response.getSummary(), now);
-            upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
-            replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
+            CustomerAiInsight customerAiInsight = upsertCustomerAiInsight(customer, response.getCustomerInsight(), now);
+            List<NonConversionReason> nonConversionReasons =
+                    replaceNonConversionReasons(customer, consultation, response.getNonConversionReasons());
 
             FollowUp followUp = null;
+            FollowUpAiInsight followUpAiInsight = null;
             if (shouldCreateFollowUp(customer)) {
                 followUp = replaceActiveFollowUp(customer, consultation, response);
-                saveFollowUpAiInsight(followUp, response, now);
+                followUpAiInsight = saveFollowUpAiInsight(followUp, response, now);
             }
             saveAiAnalysisCompletedTimeline(consultation, response, followUp, now);
             if (followUp != null) {
                 saveNextActionCreatedTimeline(consultation, followUp, response, now);
             }
+
+            SavedAnalysisResult savedAnalysisResult = new SavedAnalysisResult(
+                    consultation,
+                    customer,
+                    service,
+                    customerAiInsight,
+                    nonConversionReasons,
+                    followUp,
+                    followUpAiInsight,
+                    null
+            );
+            return savedAnalysisResult.withGraphSyncRequest(toGraphSyncRequest(savedAnalysisResult));
         });
+    }
+
+    private void syncConsultationGraph(SavedAnalysisResult savedAnalysisResult) {
+        if (savedAnalysisResult == null || savedAnalysisResult.graphSyncRequest() == null) {
+            return;
+        }
+
+        try {
+            aiConsultationClient.syncConsultationGraph(savedAnalysisResult.graphSyncRequest());
+        } catch (RuntimeException e) {
+            UUID consultationId = savedAnalysisResult.consultation() != null
+                    ? savedAnalysisResult.consultation().getId()
+                    : null;
+            log.warn("AuraDB graph sync failed. consultationId={}", consultationId, e);
+        }
     }
 
     private boolean shouldCreateFollowUp(Customer customer) {
@@ -250,7 +282,7 @@ public class ConsultationAiAnalysisService {
         return ConsultationErrorCode.AI_ANALYSIS_FAILED.name();
     }
 
-    private void upsertCustomerAiInsight(
+    private CustomerAiInsight upsertCustomerAiInsight(
             Customer customer,
             AiConsultationAnalyzeResponse.CustomerInsight insight,
             OffsetDateTime analyzedAt
@@ -268,9 +300,10 @@ public class ConsultationAiAnalysisService {
         );
 
         customerAiInsightRepository.save(customerAiInsight);
+        return customerAiInsight;
     }
 
-    private void replaceNonConversionReasons(
+    private List<NonConversionReason> replaceNonConversionReasons(
             Customer customer,
             Consultation consultation,
             List<AiConsultationAnalyzeResponse.NonConversionReason> reasons
@@ -278,7 +311,7 @@ public class ConsultationAiAnalysisService {
         nonConversionReasonRepository.deleteAllByCustomerId(customer.getId());
 
         if (reasons == null || reasons.isEmpty()) {
-            return;
+            return List.of();
         }
 
         List<NonConversionReason> entities = reasons.stream()
@@ -293,6 +326,7 @@ public class ConsultationAiAnalysisService {
                 .toList();
 
         nonConversionReasonRepository.saveAll(entities);
+        return entities;
     }
 
     private FollowUp replaceActiveFollowUp(
@@ -322,7 +356,7 @@ public class ConsultationAiAnalysisService {
         return response.getNextBestAction().getTitle();
     }
 
-    private void saveFollowUpAiInsight(
+    private FollowUpAiInsight saveFollowUpAiInsight(
             FollowUp followUp,
             AiConsultationAnalyzeResponse response,
             OffsetDateTime analyzedAt
@@ -333,13 +367,15 @@ public class ConsultationAiAnalysisService {
                 : Map.of();
         Map<String, Object> actionBasis = buildActionBasis(response);
 
-        followUpAiInsightRepository.save(FollowUpAiInsight.builder()
+        FollowUpAiInsight followUpAiInsight = FollowUpAiInsight.builder()
                 .followUp(followUp)
                 .persuasionPoint(persuasionPoint)
                 .cautionNote(insight != null ? insight.getCautionNote() : null)
                 .actionBasis(actionBasis)
                 .analyzedAt(analyzedAt)
-                .build());
+                .build();
+        followUpAiInsightRepository.save(followUpAiInsight);
+        return followUpAiInsight;
     }
 
     private Map<String, Object> buildActionBasis(AiConsultationAnalyzeResponse response) {
@@ -450,6 +486,126 @@ public class ConsultationAiAnalysisService {
                 .build());
     }
 
+    private AiConsultationGraphSyncRequest toGraphSyncRequest(SavedAnalysisResult savedAnalysisResult) {
+        Consultation consultation = savedAnalysisResult.consultation();
+        Customer customer = savedAnalysisResult.customer();
+        Service service = savedAnalysisResult.service();
+        Store store = customer.getStore();
+        InflowPathOption inflowPathOption = customer.getInflowPathOption();
+        CustomerAiInsight customerAiInsight = savedAnalysisResult.customerAiInsight();
+
+        return AiConsultationGraphSyncRequest.builder()
+                .store(AiConsultationGraphSyncRequest.StoreInfo.builder()
+                        .storeId(store.getId())
+                        .storeType(store.getStoreType())
+                        .build())
+                .service(AiConsultationGraphSyncRequest.ServiceInfo.builder()
+                        .serviceId(service.getId())
+                        .storeId(service.getStore().getId())
+                        .serviceName(service.getName())
+                        .description(service.getDescription())
+                        .price(service.getPrice())
+                        .active(service.isActive())
+                        .build())
+                .customer(AiConsultationGraphSyncRequest.CustomerInfo.builder()
+                        .customerId(customer.getId())
+                        .storeId(store.getId())
+                        .registeredServiceId(customer.getRegisteredService() != null
+                                ? customer.getRegisteredService().getId()
+                                : null)
+                        .name(customer.getName())
+                        .gender(customer.getGender())
+                        .birthDate(customer.getBirthDate())
+                        .phoneNum(customer.getPhoneNum())
+                        .preferredContactChannel(customer.getPreferredContactChannel())
+                        .status(customer.getStatus())
+                        .inflowPathId(inflowPathOption.getId())
+                        .inflowPathName(inflowPathOption.getName())
+                        .registeredAt(customer.getRegisteredAt())
+                        .firstConsultAt(customer.getFirstConsultAt())
+                        .latestConsultAt(customer.getLatestConsultAt())
+                        .build())
+                .consultation(AiConsultationGraphSyncRequest.ConsultationInfo.builder()
+                        .consultationId(consultation.getId())
+                        .customerId(customer.getId())
+                        .consultedServiceId(service.getId())
+                        .sessionNo(consultation.getSessionNo())
+                        .consultedAt(consultation.getConsultedAt())
+                        .stage(consultation.getStage())
+                        .sourceType(consultation.getSourceType())
+                        .rawText(consultation.getRawText())
+                        .summary(consultation.getSummary())
+                        .aiAnalysisStatus(consultation.getAiAnalysisStatus())
+                        .aiParsedAt(consultation.getAiParsedAt())
+                        .build())
+                .customerAiInsight(AiConsultationGraphSyncRequest.CustomerAiInsightInfo.builder()
+                        .customerId(customer.getId())
+                        .leadTemperature(customerAiInsight.getLeadTemperature())
+                        .temperatureBasis(customerAiInsight.getTemperatureBasis())
+                        .priorityScore(customerAiInsight.getPriorityScore())
+                        .analyzedAt(customerAiInsight.getAnalyzedAt())
+                        .build())
+                .nonConversionReasons(toGraphSyncNonConversionReasons(savedAnalysisResult.nonConversionReasons()))
+                .followUp(toGraphSyncFollowUp(savedAnalysisResult.followUp()))
+                .followUpAiInsight(toGraphSyncFollowUpAiInsight(savedAnalysisResult.followUpAiInsight()))
+                .build();
+    }
+
+    private List<AiConsultationGraphSyncRequest.NonConversionReasonInfo> toGraphSyncNonConversionReasons(
+            List<NonConversionReason> nonConversionReasons
+    ) {
+        if (nonConversionReasons == null || nonConversionReasons.isEmpty()) {
+            return List.of();
+        }
+
+        return nonConversionReasons.stream()
+                .map(reason -> AiConsultationGraphSyncRequest.NonConversionReasonInfo.builder()
+                        .reasonId(reason.getId())
+                        .customerId(reason.getCustomer().getId())
+                        .consultationId(reason.getConsultation() != null ? reason.getConsultation().getId() : null)
+                        .reasonType(reason.getReasonType())
+                        .role(reason.getRole())
+                        .reasonBasis(reason.getReasonBasis())
+                        .confidence(reason.getConfidence())
+                        .build())
+                .toList();
+    }
+
+    private AiConsultationGraphSyncRequest.FollowUpInfo toGraphSyncFollowUp(FollowUp followUp) {
+        if (followUp == null) {
+            return null;
+        }
+
+        return AiConsultationGraphSyncRequest.FollowUpInfo.builder()
+                .followUpId(followUp.getId())
+                .customerId(followUp.getCustomer().getId())
+                .consultationId(followUp.getConsultation().getId())
+                .recommendContactDate(followUp.getRecommendContactDate())
+                .status(followUp.getStatus())
+                .contactRound(followUp.getContactRound())
+                .hasReply(followUp.isHasReply())
+                .repliedAt(followUp.getRepliedAt())
+                .snoozedUntil(followUp.getSnoozedUntil())
+                .memo(followUp.getMemo())
+                .build();
+    }
+
+    private AiConsultationGraphSyncRequest.FollowUpAiInsightInfo toGraphSyncFollowUpAiInsight(
+            FollowUpAiInsight followUpAiInsight
+    ) {
+        if (followUpAiInsight == null) {
+            return null;
+        }
+
+        return AiConsultationGraphSyncRequest.FollowUpAiInsightInfo.builder()
+                .followUpId(followUpAiInsight.getFollowUp().getId())
+                .persuasionPoint(followUpAiInsight.getPersuasionPoint())
+                .cautionNote(followUpAiInsight.getCautionNote())
+                .actionBasis(followUpAiInsight.getActionBasis())
+                .analyzedAt(followUpAiInsight.getAnalyzedAt())
+                .build();
+    }
+
     private ConsultationRegistrationStatus resolveRegistrationStatus(CustomerStatus customerStatus) {
         return switch (customerStatus) {
             case REGISTERED -> ConsultationRegistrationStatus.REGISTERED;
@@ -473,5 +629,29 @@ public class ConsultationAiAnalysisService {
 
     private TransactionTemplate transactionTemplate() {
         return new TransactionTemplate(transactionManager);
+    }
+
+    private record SavedAnalysisResult(
+            Consultation consultation,
+            Customer customer,
+            Service service,
+            CustomerAiInsight customerAiInsight,
+            List<NonConversionReason> nonConversionReasons,
+            FollowUp followUp,
+            FollowUpAiInsight followUpAiInsight,
+            AiConsultationGraphSyncRequest graphSyncRequest
+    ) {
+        private SavedAnalysisResult withGraphSyncRequest(AiConsultationGraphSyncRequest graphSyncRequest) {
+            return new SavedAnalysisResult(
+                    consultation,
+                    customer,
+                    service,
+                    customerAiInsight,
+                    nonConversionReasons,
+                    followUp,
+                    followUpAiInsight,
+                    graphSyncRequest
+            );
+        }
     }
 }
