@@ -23,7 +23,7 @@ import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Builder
@@ -70,7 +70,7 @@ public class InquirySignal {
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 
     public static InquirySignal from(Inquiry inquiry, AiCheckPreviewItemRequest item) {
         return InquirySignal.builder()
