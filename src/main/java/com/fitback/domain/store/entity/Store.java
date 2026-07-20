@@ -27,6 +27,9 @@ public class Store extends BaseTimeEntity {
     @Column(name = "store_type", nullable = false, length = 50)
     private StoreType storeType;
 
+    @Column(name = "custom_store_type", length = 100)
+    private String customStoreType;
+
     @Column(length = 20)
     private String phone;
 
