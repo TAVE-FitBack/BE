@@ -51,6 +51,7 @@ import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.ConversionSource;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.enums.FollowUpNextActionSource;
 import com.fitback.domain.customer.enums.FollowUpStatus;
 import com.fitback.domain.customer.enums.MessageDeliveryStatus;
 import com.fitback.domain.customer.enums.MessageTonePreset;
@@ -64,6 +65,8 @@ import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
+import com.fitback.domain.customer.support.FollowUpRoundDecision;
+import com.fitback.domain.customer.support.FollowUpRoundPolicy;
 import com.fitback.domain.inquiry.entity.Inquiry;
 import com.fitback.domain.inquiry.repository.InquiryRepository;
 import com.fitback.domain.service.entity.Service;
@@ -119,6 +122,7 @@ public class CustomerService {
     private final FollowUpConversionService followUpConversionService;
     private final ConsultationMaterialFileService consultationMaterialFileService;
     private final ConsultationSignalService consultationSignalService;
+    private final FollowUpRoundPolicy followUpRoundPolicy;
 
     public CustomerDetailResponse getCustomerDetail(UUID storeId, UUID customerId) {
         if (storeId == null) {
@@ -666,7 +670,11 @@ public class CustomerService {
 
         FollowUp activeFollowUp = followUpRepository.findActiveByCustomerId(customerId)
                 .orElse(null);
-        int nextContactRound = resolveNextContactRound(activeFollowUp);
+        FollowUpRoundDecision roundDecision = followUpRoundPolicy.decide(
+                activeFollowUp,
+                FollowUpNextActionSource.MANUAL_REGENERATION
+        );
+        int nextContactRound = roundDecision.contactRound();
 
         AiNextActionRegenerateResponse aiResponse = aiConsultationClient.regenerateNextAction(
                 buildNextActionAiRequest(customer, latestConsultation, customerAiInsight, reasons)
@@ -1177,20 +1185,6 @@ public class CustomerService {
             case PENDING, SCHEDULED -> FOLLOW_UP_ACTION_KEEP;
             case NO_SHOW -> FOLLOW_UP_ACTION_REGENERATION_AVAILABLE;
         };
-    }
-
-    private int resolveNextContactRound(FollowUp activeFollowUp) {
-        if (activeFollowUp == null) {
-            return 1;
-        }
-        int currentRound = activeFollowUp.getContactRound();
-        if (activeFollowUp.getStatus() == FollowUpStatus.SENT) {
-            if (currentRound >= 3) {
-                throw new BusinessException(CustomerErrorCode.FOLLOW_UP_ROUND_LIMIT_EXCEEDED);
-            }
-            return currentRound + 1;
-        }
-        return currentRound;
     }
 
     private Map<String, Object> buildFollowUpTimelineValue(FollowUp followUp, String nextActionTitle) {
