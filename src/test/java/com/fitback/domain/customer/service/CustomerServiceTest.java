@@ -66,6 +66,7 @@ import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.MessageTemplateRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
+import com.fitback.domain.customer.support.FollowUpRoundPolicy;
 import com.fitback.domain.inquiry.repository.InquiryRepository;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.service.repository.ServiceRepository;
@@ -191,7 +192,8 @@ class CustomerServiceTest {
                 eventPublisher,
                 followUpConversionService,
                 consultationMaterialFileService,
-                consultationSignalService
+                consultationSignalService,
+                new FollowUpRoundPolicy()
         );
     }
 
@@ -2360,6 +2362,44 @@ class CustomerServiceTest {
         verify(followUpRepository).save(argThat(followUp ->
                 followUp.getStatus() == FollowUpStatus.PENDING
                         && followUp.getContactRound() == 1
+        ));
+    }
+
+    @Test
+    @DisplayName("Active 2nd round PENDING follow-up regenerates as 2nd round PENDING")
+    void regenerateSecondRoundPendingNextActionKeepsSecondRound() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.PENDING, 2, 2);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(2);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 2
+        ));
+    }
+
+    @Test
+    @DisplayName("Active 3rd round PENDING follow-up regenerates as 3rd round PENDING")
+    void regenerateThirdRoundPendingNextActionKeepsThirdRound() {
+        RegenerateContext context = prepareRegenerateContext(FollowUpStatus.PENDING, 3, 3);
+
+        NextActionRegenerateResponse response = customerService.regenerateNextAction(
+                context.storeId(),
+                context.customerId(),
+                new NextActionRegenerateRequest()
+        );
+
+        assertThat(response.getContactRound()).isEqualTo(3);
+        assertThat(response.getNewFollowUpStatus()).isEqualTo(FollowUpStatus.PENDING);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == 3
         ));
     }
 
