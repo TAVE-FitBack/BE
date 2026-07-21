@@ -30,6 +30,7 @@ import com.fitback.domain.customer.repository.CustomerAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
+import com.fitback.domain.customer.support.FollowUpRoundPolicy;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.store.entity.Store;
 import com.fitback.domain.store.enums.StoreType;
@@ -57,6 +58,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
@@ -109,7 +111,8 @@ class ConsultationAiAnalysisServiceTest {
                 followUpRepository,
                 followUpAiInsightRepository,
                 customerActivityTimelineRepository,
-                transactionManager
+                transactionManager,
+                new FollowUpRoundPolicy()
         );
         lenient().when(consultationMaterialRepository.findAllByConsultationIdOrderByCreatedAtAsc(any()))
                 .thenReturn(List.of());
@@ -148,10 +151,8 @@ class ConsultationAiAnalysisServiceTest {
         when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
         when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse);
         when(customerAiInsightRepository.findById(consultation.getCustomer().getId())).thenReturn(Optional.empty());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                consultation.getCustomer().getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(consultation.getCustomer().getId()))
+                .thenReturn(Optional.empty());
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
 
         consultationAiAnalysisService.analyzeConsultation(consultationId);
@@ -221,10 +222,8 @@ class ConsultationAiAnalysisServiceTest {
                 .thenReturn(List.of(material));
         when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
         when(customerAiInsightRepository.findById(consultation.getCustomer().getId())).thenReturn(Optional.empty());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                consultation.getCustomer().getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(consultation.getCustomer().getId()))
+                .thenReturn(Optional.empty());
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(FollowUp.builder()
                 .id(UUID.randomUUID())
                 .customer(consultation.getCustomer())
@@ -267,10 +266,8 @@ class ConsultationAiAnalysisServiceTest {
         when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
         when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse);
         when(customerAiInsightRepository.findById(consultation.getCustomer().getId())).thenReturn(Optional.empty());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                consultation.getCustomer().getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.of(existingFollowUp));
+        when(followUpRepository.findActiveByCustomerId(consultation.getCustomer().getId()))
+                .thenReturn(Optional.of(existingFollowUp));
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
 
         consultationAiAnalysisService.analyzeConsultation(consultationId);
@@ -314,10 +311,8 @@ class ConsultationAiAnalysisServiceTest {
         when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(reconsultation));
         when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
         when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                customer.getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.of(existingFollowUp));
+        when(followUpRepository.findActiveByCustomerId(customer.getId()))
+                .thenReturn(Optional.of(existingFollowUp));
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
 
         consultationAiAnalysisService.analyzeConsultation(consultationId);
@@ -336,6 +331,68 @@ class ConsultationAiAnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("AI 분석은 기존 1차 PENDING follow_up을 같은 1차 PENDING으로 교체한다")
+    void analyzeConsultationKeepsFirstRoundForPendingFirstRoundFollowUp() {
+        assertAiAnalysisCreatesFollowUpWithRound(FollowUpStatus.PENDING, 1, 1);
+    }
+
+    @Test
+    @DisplayName("AI 분석은 기존 1차 SENT follow_up을 2차 PENDING으로 교체한다")
+    void analyzeConsultationCreatesSecondRoundForSentFirstRoundFollowUp() {
+        assertAiAnalysisCreatesFollowUpWithRound(FollowUpStatus.SENT, 1, 2);
+    }
+
+    @Test
+    @DisplayName("AI 분석은 기존 2차 SENT follow_up을 3차 PENDING으로 교체한다")
+    void analyzeConsultationCreatesThirdRoundForSentSecondRoundFollowUp() {
+        assertAiAnalysisCreatesFollowUpWithRound(FollowUpStatus.SENT, 2, 3);
+    }
+
+    @Test
+    @DisplayName("AI 분석은 기존 3차 PENDING follow_up을 같은 3차 PENDING으로 교체한다")
+    void analyzeConsultationKeepsThirdRoundForPendingThirdRoundFollowUp() {
+        assertAiAnalysisCreatesFollowUpWithRound(FollowUpStatus.PENDING, 3, 3);
+    }
+
+    @Test
+    @DisplayName("AI 분석은 기존 3차 SENT follow_up이 있으면 분석값만 저장하고 새 follow_up을 생성하지 않는다")
+    void analyzeConsultationSkipsFollowUpCreationForSentThirdRoundFollowUp() {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customer();
+        Service service = service();
+        Consultation consultation = consultation(consultationId, customer, service, AiAnalysisStatus.PROCESSING);
+        FollowUp existingFollowUp = followUp(customer, consultation, FollowUpStatus.SENT, 3);
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(customer.getId()))
+                .thenReturn(Optional.of(existingFollowUp));
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.COMPLETED);
+        assertThat(consultation.getSummary()).isEqualTo("가격 부담은 있으나 운동 의지가 있는 고객입니다.");
+        assertThat(existingFollowUp.getStatus()).isEqualTo(FollowUpStatus.SENT);
+        verify(customerAiInsightRepository).save(any(CustomerAiInsight.class));
+        verify(nonConversionReasonRepository).deleteAllByCustomerId(customer.getId());
+        verify(nonConversionReasonRepository).saveAll(any());
+        verify(followUpRepository, never()).save(any(FollowUp.class));
+        verify(followUpAiInsightRepository, never()).save(any(FollowUpAiInsight.class));
+
+        ArgumentCaptor<CustomerActivityTimeline> timelineCaptor = ArgumentCaptor.forClass(CustomerActivityTimeline.class);
+        verify(customerActivityTimelineRepository).save(timelineCaptor.capture());
+        assertThat(timelineCaptor.getValue().getActivityType()).isEqualTo(CustomerActivityType.AI_ANALYSIS_COMPLETED);
+        assertThat(timelineCaptor.getValue().getAfterValue()).containsEntry("followUpId", null);
+
+        ArgumentCaptor<AiConsultationGraphSyncRequest> syncCaptor =
+                ArgumentCaptor.forClass(AiConsultationGraphSyncRequest.class);
+        verify(aiConsultationClient).syncConsultationGraph(syncCaptor.capture());
+        assertThat(syncCaptor.getValue().getFollowUp()).isNull();
+        assertThat(syncCaptor.getValue().getFollowUpAiInsight()).isNull();
+    }
+
+    @Test
     @DisplayName("REGISTERED 고객은 AI 분석 완료 후 새 PENDING follow_up을 생성하지 않는다")
     void analyzeRegisteredCustomerDoesNotCreateFollowUp() {
         UUID consultationId = UUID.randomUUID();
@@ -350,7 +407,7 @@ class ConsultationAiAnalysisServiceTest {
         consultationAiAnalysisService.analyzeConsultation(consultationId);
 
         assertThat(consultation.getAiAnalysisStatus()).isEqualTo(AiAnalysisStatus.COMPLETED);
-        verify(followUpRepository, never()).findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(any(), any());
+        verify(followUpRepository, never()).findActiveByCustomerId(any());
         verify(followUpRepository, never()).save(any(FollowUp.class));
         verify(followUpAiInsightRepository, never()).save(any(FollowUpAiInsight.class));
 
@@ -385,10 +442,8 @@ class ConsultationAiAnalysisServiceTest {
             ReflectionTestUtils.setField(reasons.get(0), "id", reasonId);
             return reasons;
         });
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                customer.getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(customer.getId()))
+                .thenReturn(Optional.empty());
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
 
         consultationAiAnalysisService.analyzeConsultation(consultationId);
@@ -456,10 +511,8 @@ class ConsultationAiAnalysisServiceTest {
         when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class)))
                 .thenReturn(aiResponseWithoutNonConversionReasons());
         when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                customer.getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(customer.getId()))
+                .thenReturn(Optional.empty());
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
 
         consultationAiAnalysisService.analyzeConsultation(consultationId);
@@ -489,10 +542,8 @@ class ConsultationAiAnalysisServiceTest {
         when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
         when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
         when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
-        when(followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(
-                customer.getId(),
-                FollowUpStatus.PENDING
-        )).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(customer.getId()))
+                .thenReturn(Optional.empty());
         when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
         doThrow(new RuntimeException("sync failed"))
                 .when(aiConsultationClient)
@@ -785,6 +836,54 @@ class ConsultationAiAnalysisServiceTest {
         verify(nonConversionReasonRepository, never()).saveAll(any());
         verify(followUpRepository, never()).save(any());
         verify(followUpAiInsightRepository, never()).save(any());
+    }
+
+    private void assertAiAnalysisCreatesFollowUpWithRound(
+            FollowUpStatus activeStatus,
+            int activeRound,
+            int expectedSavedRound
+    ) {
+        UUID consultationId = UUID.randomUUID();
+        Customer customer = customer();
+        Service service = service();
+        Consultation consultation = consultation(consultationId, customer, service, AiAnalysisStatus.PROCESSING);
+        FollowUp existingFollowUp = followUp(customer, consultation, activeStatus, activeRound);
+        FollowUp savedFollowUp = followUp(customer, consultation, FollowUpStatus.PENDING, expectedSavedRound);
+
+        when(consultationRepository.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(aiConsultationClient.analyzeConsultation(any(AiConsultationAnalyzeRequest.class))).thenReturn(aiResponse());
+        when(customerAiInsightRepository.findById(customer.getId())).thenReturn(Optional.empty());
+        when(followUpRepository.findActiveByCustomerId(customer.getId()))
+                .thenReturn(Optional.of(existingFollowUp));
+        when(followUpRepository.save(any(FollowUp.class))).thenReturn(savedFollowUp);
+
+        consultationAiAnalysisService.analyzeConsultation(consultationId);
+
+        assertThat(existingFollowUp.getStatus()).isEqualTo(FollowUpStatus.SUPERSEDED);
+        verify(followUpRepository).save(argThat(followUp ->
+                followUp.getStatus() == FollowUpStatus.PENDING
+                        && followUp.getContactRound() == expectedSavedRound
+                        && followUp.getCustomer() == customer
+                        && followUp.getConsultation() == consultation
+        ));
+        verify(followUpAiInsightRepository).save(argThat(insight -> insight.getFollowUp() == savedFollowUp));
+    }
+
+    private FollowUp followUp(
+            Customer customer,
+            Consultation consultation,
+            FollowUpStatus status,
+            int contactRound
+    ) {
+        return FollowUp.builder()
+                .id(UUID.randomUUID())
+                .customer(customer)
+                .consultation(consultation)
+                .recommendContactDate(LocalDate.of(2026, 7, 3))
+                .status(status)
+                .contactRound(contactRound)
+                .memo("가격 부담을 낮춘 시작 옵션을 안내")
+                .build();
     }
 
     private AiConsultationAnalyzeResponse aiResponse() {
