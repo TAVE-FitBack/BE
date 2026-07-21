@@ -20,12 +20,15 @@ import com.fitback.domain.customer.entity.NonConversionReason;
 import com.fitback.domain.customer.enums.ActivityRelatedType;
 import com.fitback.domain.customer.enums.CustomerActivityType;
 import com.fitback.domain.customer.enums.CustomerStatus;
+import com.fitback.domain.customer.enums.FollowUpNextActionSource;
 import com.fitback.domain.customer.enums.FollowUpStatus;
 import com.fitback.domain.customer.repository.CustomerActivityTimelineRepository;
 import com.fitback.domain.customer.repository.CustomerAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpAiInsightRepository;
 import com.fitback.domain.customer.repository.FollowUpRepository;
 import com.fitback.domain.customer.repository.NonConversionReasonRepository;
+import com.fitback.domain.customer.support.FollowUpRoundDecision;
+import com.fitback.domain.customer.support.FollowUpRoundPolicy;
 import com.fitback.domain.service.entity.Service;
 import com.fitback.domain.store.entity.Store;
 import com.fitback.global.exception.BaseErrorCode;
@@ -55,6 +58,7 @@ public class ConsultationAiAnalysisService {
     private final FollowUpAiInsightRepository followUpAiInsightRepository;
     private final CustomerActivityTimelineRepository customerActivityTimelineRepository;
     private final PlatformTransactionManager transactionManager;
+    private final FollowUpRoundPolicy followUpRoundPolicy;
 
     public void analyzeConsultation(UUID consultationId) {
         if (consultationId == null) {
@@ -184,7 +188,9 @@ public class ConsultationAiAnalysisService {
             FollowUpAiInsight followUpAiInsight = null;
             if (shouldCreateFollowUp(customer)) {
                 followUp = replaceActiveFollowUp(customer, consultation, response);
-                followUpAiInsight = saveFollowUpAiInsight(followUp, response, now);
+                if (followUp != null) {
+                    followUpAiInsight = saveFollowUpAiInsight(followUp, response, now);
+                }
             }
             saveAiAnalysisCompletedTimeline(consultation, response, followUp, now);
             if (followUp != null) {
@@ -334,14 +340,26 @@ public class ConsultationAiAnalysisService {
             Consultation consultation,
             AiConsultationAnalyzeResponse response
     ) {
-        followUpRepository.findFirstByCustomerIdAndStatusOrderByRecommendContactDateAsc(customer.getId(), FollowUpStatus.PENDING)
-                .ifPresent(FollowUp::markSuperseded);
+        FollowUp activeFollowUp = followUpRepository.findActiveByCustomerId(customer.getId())
+                .orElse(null);
+        FollowUpRoundDecision roundDecision = followUpRoundPolicy.decide(
+                activeFollowUp,
+                FollowUpNextActionSource.CONSULTATION_AI_ANALYSIS
+        );
+        if (!roundDecision.createFollowUp()) {
+            return null;
+        }
+
+        if (activeFollowUp != null) {
+            activeFollowUp.markSuperseded();
+        }
 
         FollowUp followUp = FollowUp.builder()
                 .customer(customer)
                 .consultation(consultation)
                 .recommendContactDate(response.getFollowUp().getRecommendContactDate())
                 .status(FollowUpStatus.PENDING)
+                .contactRound(roundDecision.contactRound())
                 .memo(resolveFollowUpMemo(response))
                 .build();
 
